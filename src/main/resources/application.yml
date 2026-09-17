@@ -1,0 +1,27 @@
+spring:
+  # Docker Compose and IntelliJ can share this module's .env file. It is optional so CI uses its injected variables.
+  config:
+    import: optional:file:.env[.properties]
+  application:
+    name: cxj-blog-backend
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/cxj_blog}
+    username: ${DB_USERNAME:cxj_blog}
+    password: ${DB_PASSWORD:${POSTGRES_PASSWORD:}}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jackson:
+    default-property-inclusion: non_null
+server:
+  port: ${SERVER_PORT:8080}
+management:
+  endpoints.web.exposure.include: health,info
+springdoc:
+  swagger-ui.path: /swagger-ui.html
+app:
+  cors-origins: ${CORS_ORIGINS:http://localhost:5173}
+  integrations:
+    geetest-enabled: ${GEETEST_ENABLED:false}
+    cos-enabled: ${COS_ENABLED:false}
+    baidu-analytics-enabled: ${BAIDU_ANALYTICS_ENABLED:false}
