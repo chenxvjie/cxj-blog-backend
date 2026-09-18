@@ -19,6 +19,7 @@ Spring Boot + MyBatis-Plus + PostgreSQL + Flyway 的博客后端。
 | --- | --- | --- | --- |
 | 2026-09-17 | initial | 初始化 Spring Boot、MyBatis-Plus、Flyway 与 PostgreSQL；建立文章、用户、分类、标签、文件、审计、埋点表及公开文章 API。 | `mvn test` 通过；Flyway V1 已在本地 PostgreSQL 执行。 |
 | 2026-09-17 | config | 后端与 Docker 配置收拢至本模块；本地启动自动读取本目录 `.env`。 | IDEA 与 Maven 启动均可连接 PostgreSQL。 |
+| 2026-09-18 | docker-prod | 增加 Java 21 多阶段生产镜像与 Docker 构建忽略规则。 | 待云服务器执行 `docker compose build backend` 验证。 |
 
 ## 待接入能力
 
