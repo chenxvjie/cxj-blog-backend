@@ -19,6 +19,8 @@ public class PostController {
   @GetMapping("/posts/{slug}") public ApiResponse<BlogPost> detail(@PathVariable String slug) {
     BlogPost post = posts.bySlug(slug); if (post == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "文章不存在"); return ApiResponse.ok(post);
   }
-  // Temporary development endpoint. Replace with @PreAuthorize("hasRole('ADMIN')") after email login is implemented.
-  @PostMapping("/admin/posts") public ApiResponse<BlogPost> create(@Valid @RequestBody PostRequest request) { return ApiResponse.ok(posts.create(request)); }
+  @PostMapping("/admin/posts") public ApiResponse<BlogPost> create(@Valid @RequestBody PostRequest request,
+      @org.springframework.security.core.annotation.AuthenticationPrincipal com.cxj.blog.auth.AuthService.User user) {
+    return ApiResponse.ok(posts.create(new PostRequest(user.id(), request.categoryId(), request.title(), request.slug(), request.summary(), request.contentMd(), request.coverUrl(), request.status(), request.isTop())));
+  }
 }
