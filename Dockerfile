@@ -7,6 +7,7 @@ COPY src ./src
 RUN mvn -B -q -DskipTests package
 
 FROM eclipse-temurin:21-jre-alpine
+ENV SPRING_PROFILES_ACTIVE=prod
 
 WORKDIR /app
 RUN addgroup -S spring && adduser -S spring -G spring

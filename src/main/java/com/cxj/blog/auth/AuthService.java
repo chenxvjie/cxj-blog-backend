@@ -7,31 +7,34 @@ import java.time.OffsetDateTime;
 import java.util.*;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class AuthService {
+  public static final String ADMIN_EMAIL = "1158189673@qq.com";
+  static final org.springframework.security.crypto.password.PasswordEncoder PASSWORDS = new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder(12);
+  private static final String DUMMY_HASH = PASSWORDS.encode("invalid-account-placeholder");
+  static void validatePassword(String password) {
+    if (password == null || password.length() < 8 || password.getBytes(StandardCharsets.UTF_8).length > 72)
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"密码至少8个字符，最多72个UTF-8字节");
+  }
   public record User(long id, String email, String nickname, String role) {}
   public record Login(String accessToken, String tokenType, long expiresIn, User user) {}
   private final JdbcTemplate db;
-  private final ObjectProvider<JavaMailSender> mail;
+  private final SesCodeSender mail;
   private final SecureRandom random = new SecureRandom();
   private final String secret;
-  private final String from;
   private final boolean enabled;
-  public AuthService(JdbcTemplate db, ObjectProvider<JavaMailSender> mail,
+  public AuthService(JdbcTemplate db, SesCodeSender mail,
       @Value("${app.auth.code-secret:}") String secret,
       @Value("${app.auth.mail-from:}") String from,
       @Value("${app.auth.email-enabled:false}") boolean enabled) {
-    this.db = db; this.mail = mail; this.secret = secret; this.from = from; this.enabled = enabled;
+    this.db = db; this.mail = mail; this.secret = secret; this.enabled = enabled;
     if (enabled && (secret.length() < 32 || from.isBlank()))
       throw new IllegalStateException("Email authentication requires a 32+ character AUTH_CODE_SECRET and MAIL_FROM");
   }
@@ -52,12 +55,12 @@ public class AuthService {
     db.queryForObject("SELECT count FROM auth_send_limit WHERE scope=? FOR UPDATE", Integer.class, scope);
     db.update("UPDATE auth_send_limit SET count=0, window_start=now() WHERE scope=? AND window_start < now()-interval '1 hour'", scope);
     int count = db.queryForObject("SELECT count FROM auth_send_limit WHERE scope=?", Integer.class, scope);
-    if (count >= max) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "验证码发送过于频繁，请稍后重试");
+    if (count >= max) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "操作过于频繁，请稍后重试");
     db.update("UPDATE auth_send_limit SET count=count+1 WHERE scope=?", scope);
   }
   @Transactional
   public void send(String rawEmail, String ip) {
-    if (!enabled || mail.getIfAvailable() == null)
+    if (!enabled)
       throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "邮箱验证码服务未配置");
     String email = normalize(rawEmail);
     // Global row serializes sends across replicas; email and IP quotas remain persistent.
@@ -66,15 +69,21 @@ public class AuthService {
     if (recent > 0) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "请等待60秒再发送");
     String code = String.format(Locale.ROOT, "%06d", random.nextInt(1_000_000));
     db.update("INSERT INTO auth_code(email,code_hash,expires_at) VALUES (?,?,now()+interval '5 minutes') ON CONFLICT(email) DO UPDATE SET code_hash=excluded.code_hash, expires_at=excluded.expires_at, sent_at=now(), attempts=0", email, codeHash(email, code));
-    SimpleMailMessage message = new SimpleMailMessage();
-    message.setFrom(from); message.setTo(email); message.setSubject("CXJ Blog 邮箱验证码");
-    message.setText("您的验证码为：" + code + "，5分钟内有效，可用于登录或注册。请勿向他人提供。");
-    try { mail.getObject().send(message); }
-    catch (org.springframework.mail.MailException e) { throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "邮件发送失败，请稍后重试"); }
+    mail.send(email, code);
   }
   @Transactional(noRollbackFor = ResponseStatusException.class)
   public Login login(String rawEmail, String code, String nickname) {
-    if (!enabled) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "邮箱验证码服务未配置");
+    if (nickname != null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"注册必须提供密码");
+    return codeLogin(rawEmail, code, null, null);
+  }
+  @Transactional(noRollbackFor = ResponseStatusException.class)
+  public Login register(String email, String code, String nickname, String password) {
+    validatePassword(password);
+    if (ADMIN_EMAIL.equals(normalize(email))) throw new ResponseStatusException(HttpStatus.CONFLICT,"该邮箱为内置账户，请登录");
+    return codeLogin(email, code, nickname, PASSWORDS.encode(password));
+  }
+  private Login codeLogin(String rawEmail, String code, String nickname, String passwordHash) {
+    if (!enabled) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "邮箱认证服务未启用，登录或注册已停止；本地模式默认不发送真实邮件");
     String email = normalize(rawEmail);
     var rows = db.queryForList("SELECT code_hash, expires_at, attempts FROM auth_code WHERE email=? FOR UPDATE", email);
     if (rows.isEmpty()) throw invalidCode();
@@ -89,11 +98,27 @@ public class AuthService {
     if (nickname != null) {
       int exists = db.queryForObject("SELECT count(*) FROM sys_user WHERE lower(email)=? AND deleted_at IS NULL", Integer.class,email);
       if (exists > 0) throw new ResponseStatusException(HttpStatus.CONFLICT,"账户已存在，请登录");
-      user = db.queryForObject("INSERT INTO sys_user(email,nickname,role) VALUES (?,?,'READER') RETURNING id,email,nickname,role", (rs,n)->new User(rs.getLong(1),rs.getString(2),rs.getString(3),rs.getString(4)),email,nickname.strip());
+      user = db.queryForObject("INSERT INTO sys_user(email,nickname,role,password_hash) VALUES (?,?,'USER',?) RETURNING id,email,nickname,role", (rs,n)->new User(rs.getLong(1),rs.getString(2),rs.getString(3),rs.getString(4)),email,nickname.strip(),passwordHash);
     } else {
       if (users.isEmpty()) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"账户不存在或不可用");
       user = users.getFirst();
     }
+    return session(user);
+  }
+  @Transactional(noRollbackFor = ResponseStatusException.class)
+  public Login passwordLogin(String rawEmail, String password, String ip) {
+    validatePassword(password);
+    String email=normalize(rawEmail);
+    quota("password-ip:"+ip,100); quota("password-email:"+email,20);
+    var rows=db.queryForList("SELECT id,email,nickname,role,password_hash FROM sys_user WHERE lower(email)=? AND deleted_at IS NULL AND status='ACTIVE'",email);
+    var row=rows.isEmpty()?null:rows.getFirst();
+    String digest=row==null || row.get("password_hash")==null?DUMMY_HASH:row.get("password_hash").toString();
+    boolean matches=PASSWORDS.matches(password,digest);
+    if (!matches || row==null || row.get("password_hash")==null)
+      throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"邮箱或密码错误；未设置密码的旧账户请使用验证码登录");
+    return session(new User(((Number)row.get("id")).longValue(),row.get("email").toString(),row.get("nickname").toString(),row.get("role").toString()));
+  }
+  private Login session(User user) {
     byte[] bytes = new byte[32]; random.nextBytes(bytes);
     String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     db.update("DELETE FROM auth_session WHERE expires_at < now()");

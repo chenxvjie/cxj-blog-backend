@@ -26,8 +26,10 @@ public class SecurityConfig {
       .sessionManagement(c -> c.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
       .requestCache(c -> c.disable())
       .authorizeHttpRequests(c -> c
+        .requestMatchers(HttpMethod.POST,"/api/v1/auth/password-login").permitAll()
+        .requestMatchers("/api/v1/manage/posts","/api/v1/manage/posts/**").authenticated()
         .requestMatchers(HttpMethod.POST,"/api/v1/auth/email-code","/api/v1/auth/email-login","/api/v1/auth/register").permitAll()
-        .requestMatchers(HttpMethod.GET,"/api/v1/posts","/api/v1/posts/*","/actuator/health").permitAll()
+        .requestMatchers(HttpMethod.GET,"/api/v1/posts","/api/v1/posts/*","/actuator/health","/api/v1/auth/captcha-config").permitAll()
         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
         .requestMatchers("/api/v1/auth/me","/api/v1/auth/logout").authenticated()
         .anyRequest().denyAll())

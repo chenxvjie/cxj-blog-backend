@@ -1,21 +1,11 @@
 spring:
+  profiles:
+    default: local
   # Docker Compose and IntelliJ can share this module's .env file. It is optional so CI uses its injected variables.
   config:
     import: optional:file:.env[.properties]
   application:
     name: cxj-blog-backend
-  mail:
-    host: ${MAIL_HOST:}
-    port: ${MAIL_PORT:587}
-    username: ${MAIL_USERNAME:}
-    password: ${MAIL_PASSWORD:}
-    properties:
-      mail.smtp.auth: true
-      mail.smtp.starttls.enable: true
-      mail.smtp.starttls.required: true
-      mail.smtp.connectiontimeout: 5000
-      mail.smtp.timeout: 5000
-      mail.smtp.writetimeout: 5000
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5433/cxj_blog}
     username: ${DB_USERNAME:cxj_blog}
@@ -32,10 +22,18 @@ management:
 springdoc:
   swagger-ui.path: /swagger-ui.html
 app:
+  geetest:
+    captcha-id: ${GEETEST_CAPTCHA_ID:}
+    captcha-key: ${GEETEST_CAPTCHA_KEY:}
   auth:
     email-enabled: ${AUTH_EMAIL_ENABLED:false}
     code-secret: ${AUTH_CODE_SECRET:}
     mail-from: ${MAIL_FROM:}
+    ses:
+      secret-id: ${TENCENTCLOUD_SECRET_ID:}
+      secret-key: ${TENCENTCLOUD_SECRET_KEY:}
+      region: ${SES_REGION:ap-hongkong}
+      template-id: ${SES_TEMPLATE_ID:219249}
   cors-origins: ${CORS_ORIGINS:http://localhost:5173}
   integrations:
     geetest-enabled: ${GEETEST_ENABLED:false}

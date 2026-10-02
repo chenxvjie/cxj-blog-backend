@@ -2,6 +2,8 @@
 
 ## Flyway 与 PostgreSQL 18
 
+2026-10-02补充：当前依赖已在独立PostgreSQL 18.6空库实际执行V1–V4并通过权限接口验证；见 `LOCAL_VERIFICATION_2026-10-02.md`。这不替代已有数据迁移、正式兼容性及回滚验收。
+
 首次启动时，Flyway 会提示当前依赖版本尚未声明测试 PostgreSQL 18.6（日志显示最新已测试版本为 17）。本地迁移 `V1__init_blog_schema.sql` 已实际执行成功。
 
 上线前应升级到明确支持目标 PostgreSQL 大版本的 Flyway 依赖，或将生产数据库固定在已验证版本，并在预发布环境重新执行所有迁移与回滚演练。

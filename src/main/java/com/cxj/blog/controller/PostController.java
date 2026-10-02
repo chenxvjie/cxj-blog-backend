@@ -19,7 +19,11 @@ public class PostController {
   @GetMapping("/posts/{slug}") public ApiResponse<BlogPost> detail(@PathVariable String slug) {
     BlogPost post = posts.bySlug(slug); if (post == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "文章不存在"); return ApiResponse.ok(post);
   }
-  @PostMapping("/admin/posts") public ApiResponse<BlogPost> create(@Valid @RequestBody PostRequest request,
+  @GetMapping("/manage/posts") public ApiResponse<Page<BlogPost>> managed(@RequestParam(defaultValue="1") long page,@RequestParam(defaultValue="10") long size,@org.springframework.security.core.annotation.AuthenticationPrincipal com.cxj.blog.auth.AuthService.User user) {return ApiResponse.ok(posts.managed(page,size,user));}
+  @GetMapping("/manage/posts/{id}") public ApiResponse<BlogPost> editable(@PathVariable long id,@org.springframework.security.core.annotation.AuthenticationPrincipal com.cxj.blog.auth.AuthService.User user) {return ApiResponse.ok(posts.editable(id,user));}
+  @PutMapping("/manage/posts/{id}") public ApiResponse<BlogPost> update(@PathVariable long id,@Valid @RequestBody PostRequest request,@org.springframework.security.core.annotation.AuthenticationPrincipal com.cxj.blog.auth.AuthService.User user) {return ApiResponse.ok(posts.update(id,request,user));}
+  @DeleteMapping("/manage/posts/{id}") public ApiResponse<Void> delete(@PathVariable long id,@org.springframework.security.core.annotation.AuthenticationPrincipal com.cxj.blog.auth.AuthService.User user) {posts.delete(id,user);return ApiResponse.ok(null);}
+  @PostMapping({"/admin/posts","/manage/posts"}) public ApiResponse<BlogPost> create(@Valid @RequestBody PostRequest request,
       @org.springframework.security.core.annotation.AuthenticationPrincipal com.cxj.blog.auth.AuthService.User user) {
     return ApiResponse.ok(posts.create(new PostRequest(user.id(), request.categoryId(), request.title(), request.slug(), request.summary(), request.contentMd(), request.coverUrl(), request.status(), request.isTop())));
   }

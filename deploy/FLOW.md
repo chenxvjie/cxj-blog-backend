@@ -4,6 +4,16 @@
 
 ## 首次安装
 
+### 2026-10-02 新版发布前置条件
+
+先安装经过审查的 `deploy/preflight-release.sh` 和新版 `deploy/deploy-backend.sh` 到服务器 `/opt/cxj-blog/deploy/`，均由root持有、权限700。Git推送不会自动更新服务器上的可信脚本。后端部署脚本现在会先调用preflight，缺失配置时在改动应用和数据库之前停止。
+
+完整认证发布要求宿主机 `.env` 配置管理员初始密码（首次初始化）、SES和极验变量。新版生成的后端Compose覆盖文件会显式传入这些变量，并保留前端镜像覆盖文件。只检查变量存在不能证明SES模板获批或真实投递成功。
+
+每次迁移前保存自定义格式数据库备份并检查目录可读性。若从V2/V3迁移到V4后部署失败，脚本不会自动恢复不兼容的旧镜像；需人工协调数据库与应用恢复，禁止把旧镜像健康等同完整回滚。迁移前保存的Compose覆盖文件位于对应release目录。
+
+本地验证：`python3 -m unittest discover -s deploy -p 'test_*.py'`；shell脚本用 `bash -n` 检查。2026-10-02已使用PostgreSQL 16.15验证V2备份恢复、V2→V4旧角色转换和密码/权限HTTP接口。
+
 将本仓库 deploy/deploy-backend.sh 通过SFTP上传到服务器 /opt/cxj-blog/deploy/deploy-backend.sh。保持LF换行，不把包含凭证的.env复制到制品中。Runner部署用户为root，脚本应由管理员维护：
 
 ```bash

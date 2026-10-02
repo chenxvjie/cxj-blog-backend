@@ -3,9 +3,7 @@ package com.cxj.blog.auth;
 import java.time.OffsetDateTime;
 import java.util.*;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.web.server.ResponseStatusException;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -13,9 +11,21 @@ import static org.mockito.ArgumentMatchers.*;
 
 class AuthServiceTest {
   JdbcTemplate db=mock(JdbcTemplate.class);
-  @SuppressWarnings("unchecked") ObjectProvider<JavaMailSender> mail=mock(ObjectProvider.class);
+  SesCodeSender mail=mock(SesCodeSender.class);
   AuthService service=new AuthService(db,mail,"test-secret-with-at-least-32-characters","blog@example.com",true);
   @Test void emailNormalization() {assertEquals("a@example.com",AuthService.normalize(" A@EXAMPLE.COM "));}
+  @Test void sendsGeneratedSixDigitCodeThroughSes() {
+    when(db.queryForObject(anyString(),eq(Integer.class),anyString())).thenReturn(0);
+    service.send(" A@EXAMPLE.COM ","127.0.0.1");
+    verify(mail).send(eq("a@example.com"),matches("[0-9]{6}"));
+  }
+  @Test void sendFailurePropagatesForTransactionRollback() {
+    when(db.queryForObject(anyString(),eq(Integer.class),anyString())).thenReturn(0);
+    doThrow(new ResponseStatusException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,"邮件发送失败"))
+        .when(mail).send(anyString(),anyString());
+    assertEquals(503,assertThrows(ResponseStatusException.class,
+        ()->service.send("a@example.com","127.0.0.1")).getStatusCode().value());
+  }
   @Test void disabledEmailFailsClosed() {
     var disabled=new AuthService(db,mail,"","",false);
     assertEquals(503,assertThrows(ResponseStatusException.class,()->disabled.send("a@example.com","127.0.0.1")).getStatusCode().value());
