@@ -46,5 +46,25 @@ class PreflightTests(unittest.TestCase):
         env['AUTH_EMAIL_ENABLED'] = 'false'
         self.assertEqual(self.run_check(env).returncode, 1)
 
+    def test_enabled_cos_requires_separate_credentials(self):
+        env = self.config()
+        env['COS_ENABLED'] = 'true'
+        self.assertEqual(self.run_check(env).returncode, 1)
+
+    def test_valid_cos_does_not_print_credentials(self):
+        env = self.config()
+        env.update(COS_ENABLED='true', COS_SECRET_ID='private-cos-id', COS_SECRET_KEY='private-cos-key',
+                   COS_REGION='ap-nanjing', COS_BUCKET='cxj-blog-images-1317285711',
+                   COS_PUBLIC_BASE_URL='https://img.chenxujie-bolg.cn')
+        result = self.run_check(env)
+        self.assertEqual(result.returncode, 0)
+        self.assertNotIn('private-cos', result.stdout + result.stderr)
+
+    def test_invalid_cos_url_blocks_release(self):
+        env = self.config()
+        env.update(COS_ENABLED='true', COS_SECRET_ID='id', COS_SECRET_KEY='key', COS_REGION='ap-nanjing',
+                   COS_BUCKET='cxj-blog-images-1317285711', COS_PUBLIC_BASE_URL='http://img.example.test')
+        self.assertEqual(self.run_check(env).returncode, 1)
+
 if __name__ == '__main__':
     unittest.main()

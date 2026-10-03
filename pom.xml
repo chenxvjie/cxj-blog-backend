@@ -7,6 +7,7 @@
   <name>cxj-blog-backend</name><description>Personal blog API</description>
   <properties><java.version>21</java.version><mybatis-plus.version>3.5.12</mybatis-plus.version></properties>
   <dependencies>
+    <dependency><groupId>com.qcloud</groupId><artifactId>cos_api</artifactId><version>5.6.227</version></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-security</artifactId></dependency>
     <dependency><groupId>com.tencentcloudapi</groupId><artifactId>tencentcloud-sdk-java-ses</artifactId><version>3.2.6</version></dependency>
     <dependency><groupId>org.springframework.security</groupId><artifactId>spring-security-test</artifactId><scope>test</scope></dependency>

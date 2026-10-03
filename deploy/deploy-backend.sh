@@ -82,6 +82,12 @@ write_override() {
       GEETEST_ENABLED: ${GEETEST_ENABLED:-false}
       GEETEST_CAPTCHA_ID: ${GEETEST_CAPTCHA_ID:-}
       GEETEST_CAPTCHA_KEY: ${GEETEST_CAPTCHA_KEY:-}
+      COS_ENABLED: ${COS_ENABLED:-false}
+      COS_SECRET_ID: ${COS_SECRET_ID:-}
+      COS_SECRET_KEY: ${COS_SECRET_KEY:-}
+      COS_REGION: ${COS_REGION:-ap-nanjing}
+      COS_BUCKET: ${COS_BUCKET:-}
+      COS_PUBLIC_BASE_URL: ${COS_PUBLIC_BASE_URL:-}
 ENVIRONMENT
   mv "$tmp" "$override"
 }

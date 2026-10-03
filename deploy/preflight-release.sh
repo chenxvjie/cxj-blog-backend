@@ -28,6 +28,12 @@ services:
       GEETEST_ENABLED: ${GEETEST_ENABLED:-false}
       GEETEST_CAPTCHA_ID: ${GEETEST_CAPTCHA_ID:-}
       GEETEST_CAPTCHA_KEY: ${GEETEST_CAPTCHA_KEY:-}
+      COS_ENABLED: ${COS_ENABLED:-false}
+      COS_SECRET_ID: ${COS_SECRET_ID:-}
+      COS_SECRET_KEY: ${COS_SECRET_KEY:-}
+      COS_REGION: ${COS_REGION:-ap-nanjing}
+      COS_BUCKET: ${COS_BUCKET:-}
+      COS_PUBLIC_BASE_URL: ${COS_PUBLIC_BASE_URL:-}
 YAML
 sql() {
   "${dc[@]}" exec -T postgres sh -c 'exec psql -X -w -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<< "BEGIN READ ONLY; $1; COMMIT;" | sed '/^BEGIN$/d; /^COMMIT$/d'
@@ -44,7 +50,8 @@ has_password=$(sql "SELECT count(*) FROM sys_user u WHERE lower(email)='11581896
 disabled=$(sql "SELECT count(*) FROM sys_user WHERE lower(email)='1158189673@qq.com' AND deleted_at IS NULL AND status<>'ACTIVE'")
 if test "$disabled" != 0; then echo 'BLOCKED: administrator account is disabled'; exit 1; fi
 cat > "$tmp/check.py" <<'PY'
-import json, sys
+import json, sys, re
+from urllib.parse import urlsplit
 env = json.load(sys.stdin)['services']['backend'].get('environment', {})
 errors = []
 def require(name, valid):
@@ -63,6 +70,16 @@ for key in ['MAIL_FROM','TENCENTCLOUD_SECRET_ID','TENCENTCLOUD_SECRET_KEY','GEET
     require(key + ' configured', bool(value(key).strip()))
 require('SES_REGION supported', value('SES_REGION') in ['ap-hongkong','ap-guangzhou'])
 require('SES_TEMPLATE_ID positive integer', value('SES_TEMPLATE_ID').isdigit() and int(value('SES_TEMPLATE_ID')) > 0)
+require('COS_ENABLED boolean', value('COS_ENABLED').lower() in ('', 'true', 'false'))
+if value('COS_ENABLED').lower() == 'true':
+    for key in ['COS_SECRET_ID', 'COS_SECRET_KEY']:
+        require(key + ' configured', bool(value(key).strip()))
+    require('COS_REGION valid', bool(re.fullmatch(r'[a-z]+-[a-z]+(?:-[a-z]+)?', value('COS_REGION'))))
+    require('COS_BUCKET valid', bool(re.fullmatch(r'[a-z0-9-]+-[0-9]+', value('COS_BUCKET'))))
+    url = urlsplit(value('COS_PUBLIC_BASE_URL'))
+    require('COS_PUBLIC_BASE_URL HTTPS origin', url.scheme == 'https' and bool(url.hostname)
+            and not url.username and not url.password and not url.query and not url.fragment and url.path in ('', '/'))
+else: print('INFO: COS image uploads disabled')
 sys.exit(1 if errors else 0)
 PY
 echo '=== Candidate runtime configuration (values are not printed) ==='
