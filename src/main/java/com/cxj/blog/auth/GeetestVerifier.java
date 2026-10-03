@@ -2,6 +2,8 @@ package com.cxj.blog.auth;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.nio.charset.StandardCharsets;
@@ -22,6 +24,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class GeetestVerifier {
+  private static final ObjectMapper JSON = new ObjectMapper().enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+  private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(GeetestVerifier.class);
   public record Proof(
       @JsonProperty("lot_number") @NotBlank @Size(max=128) String lotNumber,
       @JsonProperty("captcha_output") @NotBlank @Size(max=8192) String captchaOutput,
@@ -70,9 +74,16 @@ public class GeetestVerifier {
     body.add("sign_token",sign(proof.lotNumber(),key));
     JsonNode response;
     try {
-      response=http.post().uri(uri->uri.path("/validate").queryParam("captcha_id",id).build())
-          .contentType(MediaType.APPLICATION_FORM_URLENCODED).body(body).retrieve().body(JsonNode.class);
-    } catch (RestClientException e) {
+      // GeeTest returns JSON with Content-Type text/javascript. Read text first,
+      // then parse JSON strictly; never execute JavaScript or accept JSONP.
+      String raw=http.post().uri(uri->uri.path("/validate").queryParam("captcha_id",id).build())
+          .contentType(MediaType.APPLICATION_FORM_URLENCODED).body(body).retrieve().body(String.class);
+      response=raw==null?null:JSON.readTree(raw);
+    } catch (RestClientException | JsonProcessingException e) {
+      // Log only exception types/status, never the URL, proof, response or secret.
+      int status=e instanceof org.springframework.web.client.RestClientResponseException httpError ? httpError.getStatusCode().value() : 0;
+      log.warn("Geetest verification failed; type={}, causeType={}, httpStatus={}", e.getClass().getSimpleName(),
+          e.getCause()==null?"none":e.getCause().getClass().getSimpleName(),status);
       throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"人机验证服务暂不可用，请重试");
     }
     if (response==null || !"success".equals(response.path("result").asText())) throw rejected();

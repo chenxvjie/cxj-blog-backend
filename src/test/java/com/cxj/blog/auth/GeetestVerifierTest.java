@@ -32,6 +32,28 @@ class GeetestVerifierTest {
     verifier.verify(proof); server.verify();
     verify(db).update(startsWith("INSERT"),eq(AuthService.hash("public-id:lot")));
   }
+  @Test void acceptsJsonWithGeetestJavascriptContentType() {
+    server.expect(anything()).andRespond(withSuccess("{\"result\":\"success\"}", MediaType.parseMediaType("text/javascript;charset=UTF-8")));
+    when(db.update(startsWith("INSERT"),anyString())).thenReturn(1);
+    verifier.verify(proof);
+    server.verify();
+    verify(db).update(startsWith("INSERT"),eq(AuthService.hash("public-id:lot")));
+  }
+  @Test void malformedJavascriptResponseFailsClosed() {
+    server.expect(anything()).andRespond(withSuccess("callback({\"result\":\"success\"})", MediaType.parseMediaType("text/javascript")));
+    assertEquals(503,assertThrows(ResponseStatusException.class,()->verifier.verify(proof)).getStatusCode().value());
+    verifyNoInteractions(db);
+  }
+  @Test void javascriptContentTypeDoesNotAllowFailedProof() {
+    server.expect(anything()).andRespond(withSuccess("{\"result\":\"fail\"}", MediaType.parseMediaType("text/javascript")));
+    assertEquals(400,assertThrows(ResponseStatusException.class,()->verifier.verify(proof)).getStatusCode().value());
+    verifyNoInteractions(db);
+  }
+  @Test void trailingNonJsonContentFailsClosed() {
+    server.expect(anything()).andRespond(withSuccess("{\"result\":\"success\"} callback()", MediaType.parseMediaType("text/javascript")));
+    assertEquals(503,assertThrows(ResponseStatusException.class,()->verifier.verify(proof)).getStatusCode().value());
+    verifyNoInteractions(db);
+  }
   @Test void failedProofDoesNotTouchDatabase() {
     respond("{\"result\":\"fail\"}");
     assertThrows(ResponseStatusException.class,()->verifier.verify(proof)); verifyNoInteractions(db);
