@@ -17,6 +17,34 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @WebMvcTest(controllers={AuthController.class,PostController.class},properties="app.cors-origins=https://chenxujie-bolg.cn")
 @Import({SecurityConfig.class,ApiErrors.class})
 class SecurityTest {
+  private static final String SITE="https://chenxujie-bolg.cn";
+  @Test void productionOriginCanPreflightArticleUpdate() throws Exception {
+    mvc.perform(options("/api/v1/manage/posts/1").header("Origin",SITE)
+        .header("Access-Control-Request-Method","PUT")
+        .header("Access-Control-Request-Headers","authorization,content-type"))
+      .andExpect(status().isOk()).andExpect(header().string("Access-Control-Allow-Origin",SITE))
+      .andExpect(header().string("Access-Control-Allow-Methods",org.hamcrest.Matchers.containsString("PUT")));
+    verifyNoInteractions(posts);
+  }
+  @Test void authenticatedArticleUpdateWithBrowserOriginReachesAuthorization() throws Exception {
+    var user=new AuthService.User(8,"a@example.com","user","USER");
+    when(auth.authenticate("user")).thenReturn(user);
+    mvc.perform(put("/api/v1/manage/posts/1").header("Origin",SITE).header("Authorization","Bearer user")
+        .contentType("application/json").content(BODY))
+      .andExpect(status().isOk()).andExpect(header().string("Access-Control-Allow-Origin",SITE));
+    verify(posts).update(eq(1L),any(PostRequest.class),eq(user));
+  }
+  @Test void untrustedOriginCannotUpdateArticle() throws Exception {
+    mvc.perform(put("/api/v1/manage/posts/1").header("Origin","https://untrusted.example")
+        .header("Authorization","Bearer user").contentType("application/json").content(BODY))
+      .andExpect(status().isForbidden());
+    verifyNoInteractions(posts);
+  }
+  @Test void allowedOriginDoesNotBypassAuthenticationForUpdate() throws Exception {
+    mvc.perform(put("/api/v1/manage/posts/1").header("Origin",SITE).contentType("application/json").content(BODY))
+      .andExpect(status().isUnauthorized());
+    verifyNoInteractions(posts);
+  }
   @Test void registrationWithoutPasswordRejected() throws Exception {
     mvc.perform(post("/api/v1/auth/register").contentType("application/json").content("{\"email\":\"a@example.com\",\"code\":\"123456\",\"nickname\":\"reader\"}")).andExpect(status().isBadRequest());
     verify(auth,never()).register(any(),any(),any(),any());

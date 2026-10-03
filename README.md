@@ -17,6 +17,7 @@ Spring Boot + MyBatis-Plus + PostgreSQL + Flyway 的博客后端。
 
 | 日期 | 提交/版本 | 功能记录 | 影响/验证 |
 | --- | --- | --- | --- |
+| 2026-10-03 | article-update-cors | 补齐文章编辑PUT的CORS允许方法，修复浏览器保存文章时的Invalid CORS request。 | 覆盖生产Origin的预检、带会话编辑、未登录与非信任域名拒绝；保留文章权限检查。 |
 | 2026-10-03 | geetest-response-fix | 兼容极验以text/javascript返回JSON，修复二次校验响应转换引起的503；异常日志仅记录类型与HTTP状态。 | 回归覆盖该媒体类型、失败验证、JSONP和尾随非JSON内容；真实发信仍需部署后重试。 |
 | 2026-09-20 | local-profile | 默认local配置隔离生产数据库地址与云服务开关，云认证停用时明确中止提示；prod仍严格校验。 | 本地配置隔离、无外部调用和生产缺失配置测试。 |
 | 2026-09-20 | geetest-v4 | 发邮箱验证码前强制极验v4二次校验，公开ID配置接口、超时拒绝与V3数据库防重放。 | 模拟极验成功/失败/异常及控制器顺序测试；真实ID/Key和前后端联合部署后需验收。 |
