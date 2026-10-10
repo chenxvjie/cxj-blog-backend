@@ -111,6 +111,7 @@ public class PostService {
     return editable(id,user);
   }
   @Transactional public BlogPost create(PostRequest r,User user) {
+    if(r.slug()==null || !r.slug().matches("[A-Za-z0-9_-]{4,30}"))throw error(HttpStatus.BAD_REQUEST,"新文章链接标识须为4–30位英文字母、数字、短横线或下划线");
     if(!admin(user) && !java.util.List.of("DRAFT","PENDING").contains(r.status()==null?"DRAFT":r.status())) throw error(HttpStatus.FORBIDDEN,"投稿需提交管理员审核");
     if(!admin(user) && Boolean.TRUE.equals(r.isTop())) throw error(HttpStatus.FORBIDDEN,"只有管理员可以置顶文章");
     BlogPost p=new BlogPost();p.setAuthorId(user.id());apply(p,r);p.setIsTop(admin(user) && Boolean.TRUE.equals(r.isTop()));p.setViewCount(0L);

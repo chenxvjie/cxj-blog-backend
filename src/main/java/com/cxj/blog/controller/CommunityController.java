@@ -54,15 +54,18 @@ public class CommunityController {
     // Soft deletion preserves associations in existing and pending article versions.
     db.update("UPDATE "+table(kind)+" SET deleted_at=now() WHERE id=?",id);return ApiResponse.ok(null);
   }
-  @GetMapping("/manage/images") public ApiResponse<?> images(@RequestParam(defaultValue="1") int page,@AuthenticationPrincipal User user) {
+  @GetMapping("/manage/images") public ApiResponse<?> images(@RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="20") int size,@AuthenticationPrincipal User user) {
     String where=" WHERE deleted_at IS NULL AND uploader_id=?";
-    int offset=(Math.max(1,Math.min(page,100000))-1)*20;
-    return ApiResponse.ok(Map.of("records",db.queryForList("SELECT id,public_url AS \"publicUrl\",original_name AS \"originalName\",size_bytes AS \"sizeBytes\",created_at AS \"createdAt\" FROM file_object"+where+" ORDER BY id DESC LIMIT 20 OFFSET ?",user.id(),offset),"total",db.queryForObject("SELECT count(*) FROM file_object"+where,Long.class,user.id())));
+    size=Math.max(1,Math.min(size,50));
+    int offset=(Math.max(1,Math.min(page,100000))-1)*size;
+    return ApiResponse.ok(Map.of("records",db.queryForList("SELECT id,public_url AS \"publicUrl\",original_name AS \"originalName\",size_bytes AS \"sizeBytes\",created_at AS \"createdAt\" FROM file_object"+where+" ORDER BY id DESC LIMIT ? OFFSET ?",user.id(),size,offset),"total",db.queryForObject("SELECT count(*) FROM file_object"+where,Long.class,user.id())));
   }
   public record Comment(@NotBlank @Size(max=2000) String content,Long parentId) {}
-  @GetMapping("/posts/{id}/comments") public ApiResponse<?> comments(@PathVariable long id,@RequestParam(defaultValue="1") int page) {
+  @GetMapping("/posts/{id}/comments") public ApiResponse<?> comments(@PathVariable long id,@RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="50") int size,@RequestParam(defaultValue="false") boolean paginated) {
     published(id);
-    return ApiResponse.ok(db.queryForList("SELECT c.id,c.parent_id AS \"parentId\",c.author_id AS \"authorId\",u.nickname,u.avatar_url AS \"avatarUrl\",c.content,c.created_at AS \"createdAt\" FROM blog_comment c JOIN sys_user u ON u.id=c.author_id WHERE c.post_id=? AND c.status='APPROVED' ORDER BY c.id LIMIT 50 OFFSET ?",id,(Math.max(1,Math.min(page,100000))-1)*50));
+    size=Math.max(1,Math.min(size,50));
+    var records=db.queryForList("SELECT c.id,c.parent_id AS \"parentId\",c.author_id AS \"authorId\",u.nickname,u.avatar_url AS \"avatarUrl\",c.content,c.created_at AS \"createdAt\" FROM blog_comment c JOIN sys_user u ON u.id=c.author_id WHERE c.post_id=? AND c.status='APPROVED' ORDER BY c.id LIMIT ? OFFSET ?",id,size,(Math.max(1,Math.min(page,100000))-1)*size);
+    return ApiResponse.ok(paginated ? Map.of("records",records,"total",db.queryForObject("SELECT count(*) FROM blog_comment c JOIN sys_user u ON u.id=c.author_id WHERE c.post_id=? AND c.status='APPROVED'",Long.class,id)) : records);
   }
   @Transactional @PostMapping("/manage/posts/{id}/comments") public ApiResponse<Void> comment(@PathVariable long id,@Valid @RequestBody Comment c,@AuthenticationPrincipal User user) {
     published(id);
@@ -79,8 +82,20 @@ public class CommunityController {
     if(db.queryForObject("SELECT count(*) FROM blog_comment c JOIN blog_post p ON p.id=c.post_id WHERE c.id=? AND c.status='APPROVED' AND p.status='PUBLISHED' AND p.deleted_at IS NULL",Integer.class,id)==0)throw error(HttpStatus.NOT_FOUND,"评论不存在");
     db.update("INSERT INTO comment_report(comment_id,reporter_id,reason) VALUES (?,?,?) ON CONFLICT(comment_id,reporter_id) DO UPDATE SET reason=excluded.reason,resolved=false,created_at=now() WHERE comment_report.resolved",id,user.id(),r.reason().strip());return ApiResponse.ok(null);
   }
-  @GetMapping("/admin/comments") public ApiResponse<?> moderation(@RequestParam(defaultValue="1") int page) {
-    return ApiResponse.ok(db.queryForList("SELECT c.*,u.nickname,(SELECT count(*) FROM comment_report r WHERE r.comment_id=c.id AND NOT r.resolved) AS reports FROM blog_comment c JOIN sys_user u ON u.id=c.author_id WHERE c.status<>'DELETED' ORDER BY (c.status='PENDING') DESC,c.id DESC LIMIT 50 OFFSET ?",(Math.max(1,Math.min(page,100000))-1)*50));
+  @GetMapping("/admin/comments") public ApiResponse<?> moderation(@RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="50") int size,@RequestParam(defaultValue="false") boolean paginated,@RequestParam(defaultValue="") String q) {
+    size=Math.max(1,Math.min(size,50));
+    String keyword=q.strip();
+    if(keyword.length()>100)throw error(HttpStatus.BAD_REQUEST,"搜索内容最多100字");
+    String from=" FROM blog_comment c JOIN sys_user u ON u.id=c.author_id WHERE c.status<>'DELETED'";
+    var args=new ArrayList<Object>();
+    if(!keyword.isEmpty()) {
+      from+=" AND (strpos(lower(c.content),lower(?))>0 OR strpos(lower(u.nickname),lower(?))>0)";
+      args.add(keyword);args.add(keyword);
+    }
+    Object[] countArgs=args.toArray();
+    args.add(size);args.add((Math.max(1,Math.min(page,100000))-1)*size);
+    var records=db.queryForList("SELECT c.*,u.nickname,(SELECT count(*) FROM comment_report r WHERE r.comment_id=c.id AND NOT r.resolved) AS reports"+from+" ORDER BY EXISTS (SELECT 1 FROM comment_report r WHERE r.comment_id=c.id AND NOT r.resolved) DESC,(c.status='PENDING') DESC,c.id DESC LIMIT ? OFFSET ?",args.toArray());
+    return ApiResponse.ok(paginated ? Map.of("records",records,"total",db.queryForObject("SELECT count(*)"+from,Long.class,countArgs)) : records);
   }
   public record Moderate(@NotNull Boolean approved) {}
   @Transactional @PostMapping("/admin/comments/{id}/review") public ApiResponse<Void> moderate(@PathVariable long id,@Valid @RequestBody Moderate r) {
@@ -96,8 +111,10 @@ public class CommunityController {
   @PutMapping("/admin/site") public ApiResponse<Void> site(@Valid @RequestBody Site s) {
     db.update("UPDATE site_setting SET title=?,description=?,about=?,contact=? WHERE id=1",s.title(),s.description(),s.about(),s.contact());return ApiResponse.ok(null);
   }
-  @GetMapping("/admin/users") public ApiResponse<?> users(@RequestParam(defaultValue="1") int page) {
-    return ApiResponse.ok(db.queryForList("SELECT id,email,nickname,role,status,last_login_at FROM sys_user WHERE deleted_at IS NULL ORDER BY id LIMIT 50 OFFSET ?",(Math.max(1,Math.min(page,100000))-1)*50));
+  @GetMapping("/admin/users") public ApiResponse<?> users(@RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="50") int size,@RequestParam(defaultValue="false") boolean paginated) {
+    size=Math.max(1,Math.min(size,50));
+    var records=db.queryForList("SELECT id,email,nickname,role,status,last_login_at FROM sys_user WHERE deleted_at IS NULL ORDER BY id LIMIT ? OFFSET ?",size,(Math.max(1,Math.min(page,100000))-1)*size);
+    return ApiResponse.ok(paginated ? Map.of("records",records,"total",db.queryForObject("SELECT count(*) FROM sys_user WHERE deleted_at IS NULL",Long.class)) : records);
   }
   public record UserStatus(@NotNull Boolean active) {}
   @Transactional @PutMapping("/admin/users/{id}/status") public ApiResponse<Void> userStatus(@PathVariable long id,@Valid @RequestBody UserStatus s) {
