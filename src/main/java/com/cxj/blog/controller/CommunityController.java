@@ -62,7 +62,7 @@ public class CommunityController {
   public record Comment(@NotBlank @Size(max=2000) String content,Long parentId) {}
   @GetMapping("/posts/{id}/comments") public ApiResponse<?> comments(@PathVariable long id,@RequestParam(defaultValue="1") int page) {
     published(id);
-    return ApiResponse.ok(db.queryForList("SELECT c.id,c.parent_id AS \"parentId\",c.author_id AS \"authorId\",u.nickname,c.content,c.created_at AS \"createdAt\" FROM blog_comment c JOIN sys_user u ON u.id=c.author_id WHERE c.post_id=? AND c.status='APPROVED' ORDER BY c.id LIMIT 50 OFFSET ?",id,(Math.max(1,Math.min(page,100000))-1)*50));
+    return ApiResponse.ok(db.queryForList("SELECT c.id,c.parent_id AS \"parentId\",c.author_id AS \"authorId\",u.nickname,u.avatar_url AS \"avatarUrl\",c.content,c.created_at AS \"createdAt\" FROM blog_comment c JOIN sys_user u ON u.id=c.author_id WHERE c.post_id=? AND c.status='APPROVED' ORDER BY c.id LIMIT 50 OFFSET ?",id,(Math.max(1,Math.min(page,100000))-1)*50));
   }
   @Transactional @PostMapping("/manage/posts/{id}/comments") public ApiResponse<Void> comment(@PathVariable long id,@Valid @RequestBody Comment c,@AuthenticationPrincipal User user) {
     published(id);

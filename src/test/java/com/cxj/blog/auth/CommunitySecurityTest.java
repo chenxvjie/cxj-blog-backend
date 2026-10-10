@@ -23,6 +23,15 @@ class CommunitySecurityTest {
     when(auth.authenticate("test-session")).thenReturn(new AuthService.User(1,"local@example.test","Test",role));
     return new Cookie(SessionCookie.NAME,"test-session");
   }
+  @Test void ordinaryReaderCommentIsPublishedImmediately() throws Exception {
+    when(db.queryForObject(anyString(),eq(Integer.class),anyLong())).thenReturn(1);
+    mvc.perform(post("/api/v1/manage/posts/42/comments")
+        .cookie(identity("USER")).header("X-Blog-Request","1")
+        .contentType("application/json").content("{\"content\":\"Reader comment\"}"))
+        .andExpect(status().isOk());
+    verify(db).update("INSERT INTO blog_comment(post_id,author_id,parent_id,content,status) VALUES (?,?,?,?,?)",
+        42L,1L,null,"Reader comment","APPROVED");
+  }
   @Test void administratorCookieCanReadBothManagementEndpoints() throws Exception {
     var cookie=identity("ADMIN");
     mvc.perform(get("/api/v1/admin/users?page=1").cookie(cookie)).andExpect(status().isOk());
