@@ -21,16 +21,19 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Configuration
 public class SecurityConfig {
   @Bean SecurityFilterChain security(HttpSecurity http, AuthService auth, ObjectMapper json) throws Exception {
-    // API accepts explicit Bearer tokens only, never cookie-based authentication.
+    // Cookie writes require a non-simple custom header. Browser cross-origin
+    // callers must pass the strict CORS allowlist before they can send it.
     http.csrf(c -> c.disable()).cors(c -> {})
       .sessionManagement(c -> c.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
       .requestCache(c -> c.disable())
       .authorizeHttpRequests(c -> c
         .requestMatchers(HttpMethod.POST,"/api/v1/auth/password-login").permitAll()
         .requestMatchers("/api/v1/manage/posts","/api/v1/manage/posts/**").authenticated()
+        .requestMatchers("/api/v1/manage/**").hasAnyRole("USER","ADMIN")
         .requestMatchers(HttpMethod.POST,"/api/v1/manage/images/upload-url","/api/v1/manage/images/complete").hasAnyRole("USER","ADMIN")
         .requestMatchers(HttpMethod.POST,"/api/v1/auth/email-code","/api/v1/auth/email-login","/api/v1/auth/register").permitAll()
         .requestMatchers(HttpMethod.GET,"/api/v1/posts","/api/v1/posts/*","/actuator/health","/api/v1/auth/captcha-config").permitAll()
+        .requestMatchers(HttpMethod.GET,"/api/v1/posts/*/comments","/api/v1/authors/*","/api/v1/taxonomy","/api/v1/site","/api/v1/archive").permitAll()
         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
         .requestMatchers("/api/v1/auth/me","/api/v1/auth/logout").authenticated()
         .anyRequest().denyAll())
@@ -40,8 +43,14 @@ public class SecurityConfig {
       .addFilterBefore(new OncePerRequestFilter() {
         @Override protected void doFilterInternal(HttpServletRequest req,HttpServletResponse res,FilterChain chain) throws ServletException,IOException {
           String header=req.getHeader("Authorization");
-          if(header != null && header.startsWith("Bearer ")) {
-            AuthService.User user=auth.authenticate(header.substring(7));
+          boolean bearer=header != null && header.startsWith("Bearer ");
+          String token=bearer?header.substring(7):SessionCookie.token(req);
+          if(!bearer && token!=null && !List.of("GET","HEAD","OPTIONS").contains(req.getMethod()) && !"1".equals(req.getHeader("X-Blog-Request"))) {
+            res.setStatus(403);res.setContentType("application/json;charset=UTF-8");
+            json.writeValue(res.getOutputStream(),new ApiResponse<>(403,"请求校验失败，请刷新页面",null));return;
+          }
+          if(token!=null) {
+            AuthService.User user=auth.authenticate(token);
             if(user != null) SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(user,null,List.of(new SimpleGrantedAuthority("ROLE_"+user.role()))));
           }
           chain.doFilter(req,res);

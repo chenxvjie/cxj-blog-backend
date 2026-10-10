@@ -133,4 +133,11 @@ public class AuthService {
     return users.isEmpty() ? null : users.getFirst();
   }
   public void logout(String token) { db.update("DELETE FROM auth_session WHERE token_hash=?",hash(token)); }
+  @Transactional public void changePassword(long id,String current,String password) {
+    validatePassword(password);
+    String digest=db.queryForObject("SELECT password_hash FROM sys_user WHERE id=? FOR UPDATE",String.class,id);
+    if(digest==null || !PASSWORDS.matches(current,digest))throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"当前密码错误");
+    db.update("UPDATE sys_user SET password_hash=? WHERE id=?",PASSWORDS.encode(password),id);
+    db.update("DELETE FROM auth_session WHERE user_id=?",id);
+  }
 }

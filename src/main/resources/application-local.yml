@@ -9,6 +9,7 @@ server:
   port: ${LOCAL_SERVER_PORT:8080}
 app:
   auth:
+    cookie-secure: false
     email-enabled: false
   integrations:
     geetest-enabled: false

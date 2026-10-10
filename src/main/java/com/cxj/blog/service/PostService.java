@@ -1,55 +1,169 @@
 package com.cxj.blog.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.cxj.blog.auth.AuthService.User;
 import com.cxj.blog.dto.PostRequest;
 import com.cxj.blog.entity.BlogPost;
 import com.cxj.blog.mapper.BlogPostMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.OffsetDateTime;
+import java.util.Objects;
+import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class PostService {
   private final BlogPostMapper mapper;
-  public PostService(BlogPostMapper mapper) { this.mapper = mapper; }
-  public Page<BlogPost> managed(long page,long size,com.cxj.blog.auth.AuthService.User user) {
-    return mapper.selectPage(Page.of(Math.max(1,page),Math.max(1,Math.min(size,50))),new LambdaQueryWrapper<BlogPost>()
-      .isNull(BlogPost::getDeletedAt).eq(!"ADMIN".equals(user.role()),BlogPost::getAuthorId,user.id()).orderByDesc(BlogPost::getId));
-  }
-  public BlogPost editable(long id,com.cxj.blog.auth.AuthService.User user) {
+  private final JdbcTemplate db;
+  private final ObjectMapper json;
+  public PostService(BlogPostMapper mapper,JdbcTemplate db,ObjectMapper json) {this.mapper=mapper;this.db=db;this.json=json;}
+  private boolean admin(User user) {return "ADMIN".equals(user.role());}
+  private ResponseStatusException error(HttpStatus status,String message) {return new ResponseStatusException(status,message);}
+  private void lock(long id) {db.queryForList("SELECT id FROM blog_post WHERE id=? FOR UPDATE",id);}
+  private BlogPost owned(long id,User user) {
     BlogPost p=mapper.selectById(id);
-    if(p==null || p.getDeletedAt()!=null) throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND,"文章不存在");
-    if(!"ADMIN".equals(user.role()) && !java.util.Objects.equals(p.getAuthorId(),user.id()))
-      throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN,"只能修改或删除自己的文章");
+    if(p==null || p.getDeletedAt()!=null) throw error(HttpStatus.NOT_FOUND,"文章不存在");
+    if(!admin(user) && !Objects.equals(p.getAuthorId(),user.id())) throw error(HttpStatus.FORBIDDEN,"只能管理自己的投稿");
     return p;
   }
-  @Transactional public BlogPost update(long id,PostRequest r,com.cxj.blog.auth.AuthService.User user) {
-    BlogPost p=editable(id,user);
-    var change=new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BlogPost>()
-      .eq(BlogPost::getId,id).isNull(BlogPost::getDeletedAt)
-      .eq(!"ADMIN".equals(user.role()),BlogPost::getAuthorId,user.id())
+  private void apply(BlogPost p,PostRequest r) {
+    p.setTitle(r.title());p.setSlug(r.slug());p.setSummary(r.summary());p.setContentMd(r.contentMd());
+    p.setCoverUrl(r.coverUrl());p.setCategoryId(r.categoryId());p.setTagIds(r.tagIds());
+  }
+  private BlogPost decorate(BlogPost p) {
+    if(p==null)return null;
+    var authors=db.queryForList("SELECT nickname FROM sys_user WHERE id=?",p.getAuthorId());
+    if(!authors.isEmpty())p.setAuthorName((String)authors.getFirst().get("nickname"));
+    if(p.getCategoryId()!=null) {
+      var cats=db.queryForList("SELECT name FROM blog_category WHERE id=? AND deleted_at IS NULL",p.getCategoryId());
+      if(!cats.isEmpty())p.setCategoryName((String)cats.getFirst().get("name"));
+    }
+    var tags=db.queryForList("SELECT t.id,t.name,t.slug FROM blog_tag t JOIN blog_post_tag pt ON pt.tag_id=t.id WHERE pt.post_id=? AND t.deleted_at IS NULL ORDER BY t.id",p.getId());
+    p.setTags(tags);p.setTagIds(tags.stream().map(t->((Number)t.get("id")).longValue()).toList());return p;
+  }
+  private void tags(long id,PostRequest r) {
+    if(r.tagIds()==null)return;
+    db.update("DELETE FROM blog_post_tag WHERE post_id=?",id);
+    for(Long tag:r.tagIds().stream().distinct().toList()) {
+      if(db.update("INSERT INTO blog_post_tag(post_id,tag_id) SELECT ?,id FROM blog_tag WHERE id=? AND deleted_at IS NULL",id,tag)!=1)throw error(HttpStatus.BAD_REQUEST,"标签已删除，请重新选择");
+    }
+  }
+  private PostRequest decode(String value) {
+    try {return json.readValue(value,PostRequest.class);} catch(Exception e) {throw new IllegalStateException("Invalid stored submission",e);}
+  }
+  private String encode(PostRequest value) {
+    try {return json.writeValueAsString(value);} catch(Exception e) {throw new IllegalStateException(e);}
+  }
+  private BlogPost overlay(BlogPost p) {
+    decorate(p);
+    p.setPublicStatus(p.getStatus());
+    var rows=db.queryForList("SELECT payload::text AS payload,status,review_reason FROM blog_post_submission WHERE post_id=?",p.getId());
+    p.setHasSubmission(!rows.isEmpty());
+    if(!rows.isEmpty()) {
+      var row=rows.getFirst();apply(p,decode(row.get("payload").toString()));p.setStatus(row.get("status").toString());
+      p.setReviewReason((String)row.get("review_reason"));
+    }
+    return p;
+  }
+  public Page<BlogPost> managed(long page,long size,User user) {
+    return managed(page,size,user,null);
+  }
+  public Page<BlogPost> managed(long page,long size,User user,String status) {
+    var filter=new LambdaQueryWrapper<BlogPost>().isNull(BlogPost::getDeletedAt).eq(!admin(user),BlogPost::getAuthorId,user.id());
+    if(status!=null && !status.isBlank())filter.apply("COALESCE((SELECT s.status FROM blog_post_submission s WHERE s.post_id=blog_post.id),status)={0}",status);
+    var result=mapper.selectPage(Page.of(Math.max(1,page),Math.max(1,Math.min(size,50))),filter.orderByDesc(BlogPost::getId));
+    result.getRecords().forEach(this::overlay);return result;
+  }
+  public BlogPost editable(long id,User user) {return overlay(owned(id,user));}
+  private void submission(BlogPost p,PostRequest r,User user) {
+    if(p.getPublishedAt()!=null && !p.getSlug().equals(r.slug()))throw error(HttpStatus.BAD_REQUEST,"已发布文章的链接标识不能修改，以保留已有分享链接");
+    if(!"USER".equals(user.role())) throw error(HttpStatus.FORBIDDEN,"当前账号不能投稿");
+    String status=r.status()==null?"DRAFT":r.status();
+    if(!"DRAFT".equals(status) && !"PENDING".equals(status)) throw error(HttpStatus.FORBIDDEN,"投稿需提交管理员审核，不能直接发布、下线或退回");
+    if(Boolean.TRUE.equals(r.isTop()) && !Boolean.TRUE.equals(p.getIsTop())) throw error(HttpStatus.FORBIDDEN,"只有管理员可以置顶文章");
+    var previous=db.queryForList("SELECT status FROM blog_post_submission WHERE post_id=?",p.getId());
+    if(!previous.isEmpty() && "PENDING".equals(previous.getFirst().get("status"))) throw error(HttpStatus.CONFLICT,"投稿审核中，请先撤回再编辑");
+    db.update("INSERT INTO blog_post_submission(post_id,payload,status) VALUES (?,?::jsonb,?) ON CONFLICT(post_id) DO UPDATE SET payload=excluded.payload,status=excluded.status,review_reason=NULL,updated_at=now()",p.getId(),encode(r),status);
+  }
+  private void publishFields(BlogPost p,PostRequest r,String status,boolean top) {
+    if(p.getPublishedAt()!=null && !p.getSlug().equals(r.slug()))throw error(HttpStatus.BAD_REQUEST,"已发布文章的链接标识不能修改，以保留已有分享链接");
+    var change=new LambdaUpdateWrapper<BlogPost>().eq(BlogPost::getId,p.getId()).isNull(BlogPost::getDeletedAt)
       .set(BlogPost::getTitle,r.title()).set(BlogPost::getSlug,r.slug()).set(BlogPost::getSummary,r.summary())
-      .set(BlogPost::getContentMd,r.contentMd()).set(BlogPost::getCoverUrl,r.coverUrl()).set(BlogPost::getCategoryId,r.categoryId())
-      .set(BlogPost::getStatus,r.status()==null?"DRAFT":r.status()).set(BlogPost::getIsTop,Boolean.TRUE.equals(r.isTop()));
-    if("PUBLISHED".equals(r.status()) && p.getPublishedAt()==null) change.set(BlogPost::getPublishedAt,OffsetDateTime.now());
-    if(mapper.update(null,change)!=1) throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,"文章已变更，请刷新");
-    return mapper.selectById(id);
+      .set(BlogPost::getContentMd,r.contentMd()).set(BlogPost::getContentHtml,null).set(BlogPost::getCoverUrl,r.coverUrl())
+      .set(BlogPost::getCategoryId,r.categoryId()).set(BlogPost::getStatus,status).set(BlogPost::getIsTop,top);
+    if("PUBLISHED".equals(status) && p.getPublishedAt()==null) change.set(BlogPost::getPublishedAt,OffsetDateTime.now());
+    if(mapper.update(null,change)!=1) throw error(HttpStatus.CONFLICT,"文章已变更，请刷新");
+    tags(p.getId(),r);
   }
-  @Transactional public void delete(long id,com.cxj.blog.auth.AuthService.User user) {
-    editable(id,user);
-    mapper.update(null,new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BlogPost>()
-      .eq(BlogPost::getId,id).isNull(BlogPost::getDeletedAt).eq(!"ADMIN".equals(user.role()),BlogPost::getAuthorId,user.id())
-      .set(BlogPost::getDeletedAt,OffsetDateTime.now()));
+  @Transactional public BlogPost update(long id,PostRequest r,User user) {
+    lock(id);BlogPost p=owned(id,user);
+    if(admin(user)) {
+      String status=r.status()==null?"DRAFT":r.status();
+      if(!java.util.List.of("DRAFT","PUBLISHED","OFFLINE").contains(status)) throw error(HttpStatus.BAD_REQUEST,"请使用审核操作处理投稿");
+      if(!db.queryForList("SELECT post_id FROM blog_post_submission WHERE post_id=?",id).isEmpty()) throw error(HttpStatus.CONFLICT,"存在投稿版本，请先完成审核或撤回");
+      publishFields(p,r,status,Boolean.TRUE.equals(r.isTop()));audit(id,user,"POST_UPDATE",null);
+    } else submission(p,r,user);
+    return editable(id,user);
   }
-  public Page<BlogPost> published(long page, long size) {
-    return mapper.selectPage(Page.of(page, Math.min(size, 50)), new LambdaQueryWrapper<BlogPost>()
-      .eq(BlogPost::getStatus, "PUBLISHED").isNull(BlogPost::getDeletedAt).orderByDesc(BlogPost::getIsTop, BlogPost::getPublishedAt));
+  @Transactional public BlogPost create(PostRequest r,User user) {
+    if(!admin(user) && !java.util.List.of("DRAFT","PENDING").contains(r.status()==null?"DRAFT":r.status())) throw error(HttpStatus.FORBIDDEN,"投稿需提交管理员审核");
+    if(!admin(user) && Boolean.TRUE.equals(r.isTop())) throw error(HttpStatus.FORBIDDEN,"只有管理员可以置顶文章");
+    BlogPost p=new BlogPost();p.setAuthorId(user.id());apply(p,r);p.setIsTop(admin(user) && Boolean.TRUE.equals(r.isTop()));p.setViewCount(0L);
+    String status=admin(user)?(r.status()==null?"DRAFT":r.status()):"DRAFT";
+    if(!java.util.List.of("DRAFT","PUBLISHED","OFFLINE").contains(status)) throw error(HttpStatus.BAD_REQUEST,"无效的文章状态");
+    p.setStatus(status);if("PUBLISHED".equals(status))p.setPublishedAt(OffsetDateTime.now());mapper.insert(p);
+    if(!admin(user)) submission(p,r,user);else tags(p.getId(),r);
+    return editable(p.getId(),user);
   }
-  public BlogPost bySlug(String slug) { return mapper.selectOne(new LambdaQueryWrapper<BlogPost>().eq(BlogPost::getSlug, slug).eq(BlogPost::getStatus, "PUBLISHED").isNull(BlogPost::getDeletedAt)); }
-  @Transactional public BlogPost create(PostRequest r) {
-    BlogPost p = new BlogPost(); p.setAuthorId(r.authorId()); p.setCategoryId(r.categoryId()); p.setTitle(r.title()); p.setSlug(r.slug()); p.setSummary(r.summary()); p.setContentMd(r.contentMd()); p.setCoverUrl(r.coverUrl());
-    p.setStatus(r.status() == null ? "DRAFT" : r.status()); p.setIsTop(Boolean.TRUE.equals(r.isTop())); p.setViewCount(0L);
-    if ("PUBLISHED".equals(p.getStatus())) p.setPublishedAt(OffsetDateTime.now()); mapper.insert(p); return p;
+  @Transactional public BlogPost withdraw(long id,User user) {
+    lock(id);owned(id,user);
+    if(db.update("UPDATE blog_post_submission SET status='DRAFT',review_reason=NULL,updated_at=now() WHERE post_id=? AND status='PENDING'",id)!=1) throw error(HttpStatus.CONFLICT,"当前没有待审核投稿");
+    return editable(id,user);
   }
+  @Transactional public BlogPost review(long id,boolean approved,String reason,User user) {
+    if(!admin(user)) throw error(HttpStatus.FORBIDDEN,"只有管理员可以审核");
+    lock(id);BlogPost p=owned(id,user);
+    var rows=db.queryForList("SELECT payload::text AS payload FROM blog_post_submission WHERE post_id=? AND status='PENDING'",id);
+    if(rows.isEmpty())throw error(HttpStatus.CONFLICT,"投稿已撤回或已审核，请刷新");
+    if(approved) {
+      publishFields(p,decode(rows.getFirst().get("payload").toString()),"PUBLISHED",Boolean.TRUE.equals(p.getIsTop()));
+      db.update("DELETE FROM blog_post_submission WHERE post_id=?",id);
+    } else {
+      if(reason==null || reason.isBlank())throw error(HttpStatus.BAD_REQUEST,"退回时请填写原因");
+      db.update("UPDATE blog_post_submission SET status='REJECTED',review_reason=?,updated_at=now() WHERE post_id=?",reason.strip(),id);
+    }
+    audit(id,user,approved?"POST_APPROVE":"POST_REJECT",reason);return editable(id,user);
+  }
+  private void audit(long id,User user,String action,String reason) {
+    db.update("INSERT INTO operation_log(operator_id,action,resource_type,resource_id,detail_json) VALUES (?,?,'POST',?,jsonb_build_object('reason',?::text))",user.id(),action,Long.toString(id),reason);
+  }
+  @Transactional public void delete(long id,User user) {
+    lock(id);BlogPost p=owned(id,user);
+    if(!admin(user) && "PUBLISHED".equals(p.getStatus()))throw error(HttpStatus.FORBIDDEN,"已发布文章请联系管理员撤稿");
+    mapper.update(null,new LambdaUpdateWrapper<BlogPost>().eq(BlogPost::getId,id).set(BlogPost::getDeletedAt,OffsetDateTime.now()));
+    db.update("DELETE FROM blog_post_submission WHERE post_id=?",id);audit(id,user,"POST_DELETE",null);
+  }
+  public Page<BlogPost> published(long page,long size) {
+    var result=mapper.selectPage(Page.of(Math.max(1,page),Math.max(1,Math.min(size,50))),new LambdaQueryWrapper<BlogPost>()
+      .eq(BlogPost::getStatus,"PUBLISHED").isNull(BlogPost::getDeletedAt).orderByDesc(BlogPost::getIsTop,BlogPost::getPublishedAt));
+    result.getRecords().forEach(this::decorate);return result;
+  }
+  public Page<BlogPost> search(long page,long size,String q,Long category,Long tag,Long author) {
+    return search(page,size,q,category,tag,author,null);
+  }
+  public Page<BlogPost> search(long page,long size,String q,Long category,Long tag,Long author,String month) {
+    var query=new LambdaQueryWrapper<BlogPost>().eq(BlogPost::getStatus,"PUBLISHED").isNull(BlogPost::getDeletedAt)
+      .eq(category!=null,BlogPost::getCategoryId,category).eq(author!=null,BlogPost::getAuthorId,author);
+    if(q!=null && !q.isBlank())query.and(w->w.like(BlogPost::getTitle,q.strip()).or().like(BlogPost::getSummary,q.strip()).or().like(BlogPost::getContentMd,q.strip()));
+    if(tag!=null)query.inSql(BlogPost::getId,"SELECT post_id FROM blog_post_tag WHERE tag_id="+tag);
+    if(month!=null && month.matches("[0-9]{4}-(0[1-9]|1[0-2])"))query.apply("to_char(published_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM')={0}",month);
+    var result=mapper.selectPage(Page.of(Math.max(1,page),Math.max(1,Math.min(size,50))),query.orderByDesc(BlogPost::getIsTop,BlogPost::getPublishedAt));
+    result.getRecords().forEach(this::decorate);return result;
+  }
+  public BlogPost bySlug(String slug) {return decorate(mapper.selectOne(new LambdaQueryWrapper<BlogPost>().eq(BlogPost::getSlug,slug).eq(BlogPost::getStatus,"PUBLISHED").isNull(BlogPost::getDeletedAt)));}
 }

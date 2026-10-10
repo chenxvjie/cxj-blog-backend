@@ -15,8 +15,33 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(controllers={AuthController.class,PostController.class},properties="app.cors-origins=https://chenxujie-bolg.cn")
-@Import({SecurityConfig.class,ApiErrors.class})
+@Import({SecurityConfig.class,ApiErrors.class,SessionCookie.class})
 class SecurityTest {
+  @Test void cookieRestoresIdentityWithoutBearer() throws Exception {
+    when(auth.authenticate("cookie-token")).thenReturn(new AuthService.User(8,"a@example.com","user","USER"));
+    mvc.perform(get("/api/v1/auth/me").cookie(new jakarta.servlet.http.Cookie(SessionCookie.NAME,"cookie-token")))
+      .andExpect(status().isOk()).andExpect(jsonPath("$.data.id").value(8)).andExpect(header().string("Cache-Control","no-store"));
+  }
+  @Test void cookieWriteNeedsCustomHeaderAndTrustedOrigin() throws Exception {
+    var cookie=new jakarta.servlet.http.Cookie(SessionCookie.NAME,"cookie-token");
+    when(auth.authenticate("cookie-token")).thenReturn(new AuthService.User(8,"a@example.com","user","USER"));
+    mvc.perform(put("/api/v1/manage/posts/1").cookie(cookie).contentType("application/json").content(BODY)).andExpect(status().isForbidden());
+    mvc.perform(put("/api/v1/manage/posts/1").cookie(cookie).header("X-Blog-Request","1").header("Origin","https://evil.example").contentType("application/json").content(BODY)).andExpect(status().isForbidden());
+    verifyNoInteractions(posts);
+    mvc.perform(put("/api/v1/manage/posts/1").cookie(cookie).header("X-Blog-Request","1").header("Origin",SITE).contentType("application/json").content(BODY)).andExpect(status().isOk());
+  }
+  @Test void successfulLoginSetsOneDayHttpOnlyCookie() throws Exception {
+    var user=new AuthService.User(8,"a@example.com","user","USER");
+    when(auth.passwordLogin(anyString(),anyString(),anyString())).thenReturn(new AuthService.Login("new-token","Bearer",86400,user));
+    mvc.perform(post("/api/v1/auth/password-login").contentType("application/json").content("{\"email\":\"a@example.com\",\"password\":\"password123\"}"))
+      .andExpect(status().isOk()).andExpect(header().string("Set-Cookie",org.hamcrest.Matchers.allOf(org.hamcrest.Matchers.containsString("Max-Age=86400"),org.hamcrest.Matchers.containsString("HttpOnly"),org.hamcrest.Matchers.containsString("SameSite=Lax"),org.hamcrest.Matchers.containsString("Path=/api/v1"))));
+  }
+  @Test void cookieLogoutRevokesAndClears() throws Exception {
+    when(auth.authenticate("cookie-token")).thenReturn(new AuthService.User(8,"a@example.com","user","USER"));
+    mvc.perform(post("/api/v1/auth/logout").cookie(new jakarta.servlet.http.Cookie(SessionCookie.NAME,"cookie-token")).header("X-Blog-Request","1"))
+      .andExpect(status().isOk()).andExpect(header().string("Set-Cookie",org.hamcrest.Matchers.containsString("Max-Age=0")));
+    verify(auth).logout("cookie-token");
+  }
   private static final String SITE="https://chenxujie-bolg.cn";
   @Test void productionOriginCanPreflightArticleUpdate() throws Exception {
     mvc.perform(options("/api/v1/manage/posts/1").header("Origin",SITE)
@@ -52,7 +77,7 @@ class SecurityTest {
   @Test void userCanCreateThroughSharedEndpointWithSessionAuthor() throws Exception {
     when(auth.authenticate("user")).thenReturn(new AuthService.User(8,"a@example.com","user","USER"));
     mvc.perform(post("/api/v1/manage/posts").header("Authorization","Bearer user").contentType("application/json").content(BODY)).andExpect(status().isOk());
-    verify(posts).create(argThat((PostRequest p)->p.authorId()==8));
+    verify(posts).create(argThat((PostRequest p)->p.authorId()==8),any(AuthService.User.class));
   }
   @Test void anonymousCannotReadManagement() throws Exception {
     mvc.perform(get("/api/v1/manage/posts")).andExpect(status().isUnauthorized());
@@ -75,7 +100,7 @@ class SecurityTest {
   @Test void adminAuthorComesFromSession() throws Exception {
     when(auth.authenticate("admin")).thenReturn(new AuthService.User(7,"a@example.com","admin","ADMIN"));
     mvc.perform(post("/api/v1/admin/posts").header("Authorization","Bearer admin").contentType("application/json").content(BODY)).andExpect(status().isOk());
-    verify(posts).create(argThat((PostRequest p)->p.authorId()==7));
+    verify(posts).create(argThat((PostRequest p)->p.authorId()==7),any(AuthService.User.class));
   }
   @Test void meRequiresValidToken() throws Exception {
     mvc.perform(get("/api/v1/auth/me").header("Authorization","Bearer expired")).andExpect(status().isUnauthorized());
