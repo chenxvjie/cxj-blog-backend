@@ -93,6 +93,19 @@ public class ImageUploadService {
       return ticket.completed;
     }
   }
+  @org.springframework.transaction.annotation.Transactional
+  public void remove(long id,AuthService.User user) {
+    if(user==null || !"ADMIN".equals(user.role()))throw error(HttpStatus.FORBIDDEN,"仅管理员可删除图片");
+    enabled();
+    var rows=db.queryForList("SELECT cos_key,public_url FROM file_object WHERE id=? AND deleted_at IS NULL FOR UPDATE",id);
+    if(rows.isEmpty())throw error(HttpStatus.NOT_FOUND,"图片不存在或已删除");
+    String url=(String)rows.getFirst().get("public_url");
+    Long references=db.queryForObject("SELECT (SELECT count(*) FROM blog_post WHERE deleted_at IS NULL AND (cover_url=? OR strpos(content_md,?)>0)) + (SELECT count(*) FROM sys_user WHERE deleted_at IS NULL AND avatar_url=?) + (SELECT count(*) FROM blog_post_submission WHERE strpos(payload::text,?)>0)",Long.class,url,url,url,url);
+    if(references!=null && references>0)throw error(HttpStatus.CONFLICT,"图片仍被文章、投稿或头像使用，请先解除引用");
+    try { cos.delete((String)rows.getFirst().get("cos_key")); }
+    catch(CosClientException e) { throw unavailable(e); }
+    db.update("UPDATE file_object SET deleted_at=now() WHERE id=?",id);
+  }
   private ResponseStatusException unavailable(CosClientException e) {
     // SDK messages can include signed URLs. Log the type only.
     LOG.warn("COS upload unavailable: {}",e.getClass().getSimpleName());

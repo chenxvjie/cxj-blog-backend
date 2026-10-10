@@ -28,6 +28,27 @@ class ImageUploadTest {
     public Clock withZone(ZoneId zone) {return this;}
     public Instant instant() {return now;}
   }
+  private static final AuthService.User ADMIN=new AuthService.User(1,"admin@example.test","admin","ADMIN");
+  @Test void regularUsersCannotDeleteEvenTheirOwnImages() {
+    status(403,() -> service.remove(1,USER));verifyNoInteractions(db,cos);
+  }
+  @Test void referencedImageCannotBeDeleted() {
+    when(db.queryForList(anyString(),eq(1L))).thenReturn(java.util.List.of(Map.of("cos_key","images/test.png","public_url","https://img.example.test/images/test.png")));
+    when(db.queryForObject(anyString(),eq(Long.class),any(),any(),any(),any())).thenReturn(1L);
+    status(409,() -> service.remove(1,ADMIN));verifyNoInteractions(cos);
+  }
+  @Test void successfulDeletionRemovesObjectBeforeHidingRecord() {
+    when(db.queryForList(anyString(),eq(1L))).thenReturn(java.util.List.of(Map.of("cos_key","images/test.png","public_url","https://img.example.test/images/test.png")));
+    when(db.queryForObject(anyString(),eq(Long.class),any(),any(),any(),any())).thenReturn(0L);
+    service.remove(1,ADMIN);
+    var order=inOrder(cos,db);order.verify(cos).delete("images/test.png");order.verify(db).update(contains("deleted_at=now()"),eq(1L));
+  }
+  @Test void storageFailureLeavesImageRecordVisible() {
+    when(db.queryForList(anyString(),eq(1L))).thenReturn(java.util.List.of(Map.of("cos_key","images/test.png","public_url","https://img.example.test/images/test.png")));
+    when(db.queryForObject(anyString(),eq(Long.class),any(),any(),any(),any())).thenReturn(0L);
+    doThrow(new CosClientException("unavailable")).when(cos).delete(anyString());
+    status(503,() -> service.remove(1,ADMIN));verify(db,never()).update(anyString(),eq(1L));
+  }
   private String prepare() {
     when(cos.uploadUrl(anyString(),any(),anyMap())).thenReturn("https://images.cos.example.test/signed");
     return service.prepare(FILE,USER).uploadId();

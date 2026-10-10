@@ -62,7 +62,7 @@ test -s "$backup"
 "${dc[@]}" exec -T postgres pg_restore --list < "$backup" > /dev/null
 printf 'Database backup: %s\n' "$backup"
 schema_before=$("${dc[@]}" exec -T postgres sh -c 'exec psql -X -w -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1 -c "SELECT max(version::int) FROM flyway_schema_history WHERE success"')
-case "$schema_before" in 2|3|4) ;; *) echo 'Unexpected schema version; stop for migration review.' >&2; exit 1;; esac
+case "$schema_before" in 2|3|4|5|6) ;; *) echo 'Unexpected schema version; stop for migration review.' >&2; exit 1;; esac
 
 write_override() {
   local tmp
@@ -111,8 +111,8 @@ rollback() {
   set +e
   local schema_after
   schema_after=$("${dc[@]}" exec -T postgres sh -c 'exec psql -X -w -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1 -c "SELECT max(version::int) FROM flyway_schema_history WHERE success"')
-  if test "$schema_before" != 4 && { test "$schema_after" = 4 || test -z "$schema_after"; }; then
-    echo 'Deployment failed after a potentially incompatible migration. Old image rollback is blocked; restore requires manual database/application recovery.' >&2
+  if test -z "$schema_after" || test "$schema_before" != "$schema_after"; then
+    echo 'Deployment failed with a changed or unknown database schema. Old image rollback is blocked; restore requires manual database/application recovery.' >&2
     printf 'Protected backup: %s; previous image: %s\n' "$backup" "$old_image" >&2
     exit "$result"
   fi

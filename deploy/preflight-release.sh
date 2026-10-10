@@ -41,7 +41,7 @@ sql() {
 echo '=== Database ==='
 sql "SELECT 'postgres=' || current_setting('server_version'); SELECT 'migration=' || version || ',success=' || success FROM flyway_schema_history ORDER BY installed_rank; SELECT 'role=' || role || ',count=' || count(*) FROM sys_user WHERE deleted_at IS NULL GROUP BY role"
 schema=$(sql "SELECT max(version::int) FROM flyway_schema_history WHERE success")
-case "$schema" in 2|3|4) ;; *) echo 'BLOCKED: unexpected migration version'; exit 1;; esac
+case "$schema" in 2|3|4|5|6) ;; *) echo 'BLOCKED: unexpected migration version'; exit 1;; esac
 conflicts=$(sql "SELECT count(*) FROM sys_user WHERE lower(email)='1158189673@qq.com' AND deleted_at IS NULL AND role<>'ADMIN'")
 if test "$conflicts" != 0; then echo 'BLOCKED: administrator email belongs to a non-admin; manual ownership review required'; exit 1; fi
 demotions=$(sql "SELECT count(*) FROM sys_user WHERE role='ADMIN' AND lower(email)<>'1158189673@qq.com'")

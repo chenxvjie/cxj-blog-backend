@@ -55,16 +55,20 @@ public class CommunityController {
     db.update("UPDATE "+table(kind)+" SET deleted_at=now() WHERE id=?",id);return ApiResponse.ok(null);
   }
   @GetMapping("/manage/images") public ApiResponse<?> images(@RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="20") int size,@AuthenticationPrincipal User user) {
-    String where=" WHERE deleted_at IS NULL AND uploader_id=?";
+    String where=" WHERE f.deleted_at IS NULL";
+    var args=new ArrayList<Object>();
+    if(!"ADMIN".equals(user.role())) {where+=" AND f.uploader_id=?";args.add(user.id());}
+    Object[] countArgs=args.toArray();
     size=Math.max(1,Math.min(size,50));
     int offset=(Math.max(1,Math.min(page,100000))-1)*size;
-    return ApiResponse.ok(Map.of("records",db.queryForList("SELECT id,public_url AS \"publicUrl\",original_name AS \"originalName\",size_bytes AS \"sizeBytes\",created_at AS \"createdAt\" FROM file_object"+where+" ORDER BY id DESC LIMIT ? OFFSET ?",user.id(),size,offset),"total",db.queryForObject("SELECT count(*) FROM file_object"+where,Long.class,user.id())));
+    args.add(size);args.add(offset);
+    return ApiResponse.ok(Map.of("records",db.queryForList("SELECT f.id,u.nickname AS \"uploaderName\",public_url AS \"publicUrl\",original_name AS \"originalName\",size_bytes AS \"sizeBytes\",f.created_at AS \"createdAt\" FROM file_object f LEFT JOIN sys_user u ON u.id=f.uploader_id"+where+" ORDER BY f.id DESC LIMIT ? OFFSET ?",args.toArray()),"total",db.queryForObject("SELECT count(*) FROM file_object f"+where,Long.class,countArgs)));
   }
   public record Comment(@NotBlank @Size(max=2000) String content,Long parentId) {}
   @GetMapping("/posts/{id}/comments") public ApiResponse<?> comments(@PathVariable long id,@RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="50") int size,@RequestParam(defaultValue="false") boolean paginated) {
     published(id);
     size=Math.max(1,Math.min(size,50));
-    var records=db.queryForList("SELECT c.id,c.parent_id AS \"parentId\",c.author_id AS \"authorId\",u.nickname,u.avatar_url AS \"avatarUrl\",c.content,c.created_at AS \"createdAt\" FROM blog_comment c JOIN sys_user u ON u.id=c.author_id WHERE c.post_id=? AND c.status='APPROVED' ORDER BY c.id LIMIT ? OFFSET ?",id,size,(Math.max(1,Math.min(page,100000))-1)*size);
+    var records=db.queryForList("WITH numbered AS (SELECT c.id,c.status,c.parent_id AS \"parentId\",c.author_id AS \"authorId\",u.nickname,u.avatar_url AS \"avatarUrl\",c.content,c.created_at AS \"createdAt\",row_number() OVER (ORDER BY c.id) AS sequence FROM blog_comment c JOIN sys_user u ON u.id=c.author_id WHERE c.post_id=?) SELECT c.*,p.sequence AS \"parentSequence\" FROM numbered c LEFT JOIN numbered p ON p.id=c.\"parentId\" WHERE c.status='APPROVED' ORDER BY c.id LIMIT ? OFFSET ?",id,size,(Math.max(1,Math.min(page,100000))-1)*size);
     return ApiResponse.ok(paginated ? Map.of("records",records,"total",db.queryForObject("SELECT count(*) FROM blog_comment c JOIN sys_user u ON u.id=c.author_id WHERE c.post_id=? AND c.status='APPROVED'",Long.class,id)) : records);
   }
   @Transactional @PostMapping("/manage/posts/{id}/comments") public ApiResponse<Void> comment(@PathVariable long id,@Valid @RequestBody Comment c,@AuthenticationPrincipal User user) {

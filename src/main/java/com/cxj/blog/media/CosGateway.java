@@ -21,5 +21,6 @@ public class CosGateway implements AutoCloseable {
     var object=client.getObjectMetadata(bucket,key);
     return new Metadata(object.getContentLength(),object.getContentType(),object.getETag());
   }
+  public void delete(String key) { client.deleteObject(bucket,key); }
   @Override public void close() { if (client != null) client.shutdown(); }
 }

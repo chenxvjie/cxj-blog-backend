@@ -3,6 +3,7 @@ import json
 import pathlib
 import subprocess
 import sys
+import re
 import unittest
 
 CHECK = pathlib.Path(__file__).with_name('preflight-release.sh').read_text(encoding='utf-8').split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
@@ -65,6 +66,17 @@ class PreflightTests(unittest.TestCase):
         env.update(COS_ENABLED='true', COS_SECRET_ID='id', COS_SECRET_KEY='key', COS_REGION='ap-nanjing',
                    COS_BUCKET='cxj-blog-images-1317285711', COS_PUBLIC_BASE_URL='http://img.example.test')
         self.assertEqual(self.run_check(env).returncode, 1)
+
+class DeploymentSchemaTests(unittest.TestCase):
+    def test_both_scripts_accept_deployed_v6_and_reject_unknown_versions(self):
+        for name, variable in [('preflight-release.sh', 'schema'), ('deploy-backend.sh', 'schema_before')]:
+            source = pathlib.Path(__file__).with_name(name).read_text(encoding='utf-8')
+            versions = re.search(r'case "\$' + variable + r'" in ([0-9|]+)\)', source).group(1).split('|')
+            self.assertEqual(set(versions), {'2', '3', '4', '5', '6'})
+
+    def test_rollback_blocks_any_changed_or_unknown_schema(self):
+        source = pathlib.Path(__file__).with_name('deploy-backend.sh').read_text(encoding='utf-8')
+        self.assertIn('if test -z "$schema_after" || test "$schema_before" != "$schema_after"; then', source)
 
 if __name__ == '__main__':
     unittest.main()

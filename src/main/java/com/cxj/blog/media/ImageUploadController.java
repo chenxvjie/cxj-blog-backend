@@ -12,6 +12,8 @@ import org.springframework.web.bind.annotation.*;
 public class ImageUploadController {
   private final ImageUploadService uploads;
   public ImageUploadController(ImageUploadService uploads) { this.uploads=uploads; }
+  @DeleteMapping("/{id}")
+  public ApiResponse<Void> remove(@PathVariable long id,@AuthenticationPrincipal AuthService.User user) { uploads.remove(id,user);return ApiResponse.ok(null); }
   public record Completion(@NotBlank String uploadId) {}
   @PostMapping("/upload-url")
   public ApiResponse<ImageUploadService.Prepared> prepare(@RequestBody ImageUploadService.Request request,

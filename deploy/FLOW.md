@@ -62,3 +62,7 @@ docker compose --env-file .env -f docker-compose.prod.yml -f docker-compose.flow
 这不是无停机部署；单后端容器重建存在短暂停机。数据库回滚不自动执行，DDL必须向后兼容，必要时人工恢复备份。备份和旧镜像会占磁盘空间，目前保留不自动删除，生产需要安排保留策略及异机备份。飞书成功通知仅放在本任务成功后；错误码/健康检查超时应通知失败。
 
 本地只完成脚本语法校验；真实Runner下载格式、镜像构建、数据库备份、健康检查和回滚必须首次手动运行验证。脚本不是已经部署到服务器的文件。
+
+## 2026-10-10 V6主机脚本更新
+
+出现 `migration=6,success=true` 后 `BLOCKED: unexpected migration version` 是旧脚本版本检查导致。同步安装本仓库的 `preflight-release.sh` 和 `deploy-backend.sh`，两者均接受V2–V6，未知版本仍停止。部署失败时仅在数据库版本已确认且未变化时自动恢复旧应用镜像；版本变化或无法查询则保留备份并转人工处理。保持root持有、权限700，执行 `bash -n` 后先运行preflight，成功再重试流水线。本次预检查失败发生在应用替换前，无需回滚数据库。
