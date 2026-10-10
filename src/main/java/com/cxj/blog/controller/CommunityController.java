@@ -42,9 +42,6 @@ public class CommunityController {
     return ApiResponse.ok(Map.of("categories",db.queryForList("SELECT c.id,c.name,c.slug,(SELECT count(*) FROM blog_post p WHERE p.category_id=c.id AND p.status='PUBLISHED' AND p.deleted_at IS NULL) AS count FROM blog_category c WHERE c.deleted_at IS NULL ORDER BY c.sort_order,c.id"),
       "tags",db.queryForList("SELECT t.id,t.name,t.slug,(SELECT count(*) FROM blog_post_tag pt JOIN blog_post p ON p.id=pt.post_id WHERE pt.tag_id=t.id AND p.status='PUBLISHED' AND p.deleted_at IS NULL) AS count FROM blog_tag t WHERE t.deleted_at IS NULL ORDER BY t.id")));
   }
-  @GetMapping("/archive") public ApiResponse<?> archive() {
-    return ApiResponse.ok(db.queryForList("SELECT to_char(published_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM') AS month,count(*) AS count FROM blog_post WHERE status='PUBLISHED' AND deleted_at IS NULL GROUP BY month ORDER BY month DESC"));
-  }
   public record Term(@NotBlank @Size(max=80) String name,@NotBlank @Pattern(regexp="[A-Za-z0-9_-]{1,120}") String slug) {}
   private String table(String kind) {return switch(kind){case "categories"->"blog_category";case "tags"->"blog_tag";default->throw error(HttpStatus.NOT_FOUND,"类型不存在");};}
   @PostMapping("/admin/taxonomy/{kind}") public ApiResponse<?> term(@PathVariable String kind,@Valid @RequestBody Term t) {
@@ -72,7 +69,7 @@ public class CommunityController {
     db.queryForList("SELECT id FROM sys_user WHERE id=? FOR UPDATE",user.id());
     if(db.queryForObject("SELECT count(*) FROM blog_comment WHERE author_id=? AND created_at>now()-interval '1 hour'",Integer.class,user.id())>=20)throw error(HttpStatus.TOO_MANY_REQUESTS,"评论过于频繁，请稍后再试");
     if(c.parentId()!=null && db.queryForObject("SELECT count(*) FROM blog_comment WHERE id=? AND post_id=? AND status='APPROVED'",Integer.class,c.parentId(),id)==0)throw error(HttpStatus.BAD_REQUEST,"回复目标不存在");
-    db.update("INSERT INTO blog_comment(post_id,author_id,parent_id,content,status) VALUES (?,?,?,?,?)",id,user.id(),c.parentId(),c.content().strip(),"ADMIN".equals(user.role())?"APPROVED":"PENDING");return ApiResponse.ok(null);
+    db.update("INSERT INTO blog_comment(post_id,author_id,parent_id,content,status) VALUES (?,?,?,?,?)",id,user.id(),c.parentId(),c.content().strip(),"APPROVED");return ApiResponse.ok(null);
   }
   @DeleteMapping("/manage/comments/{id}") public ApiResponse<Void> removeComment(@PathVariable long id,@AuthenticationPrincipal User user) {
     if(db.update("UPDATE blog_comment SET status='DELETED' WHERE id=? AND (author_id=? OR ?='ADMIN')",id,user.id(),user.role())!=1)throw error(HttpStatus.FORBIDDEN,"无权删除此评论");return ApiResponse.ok(null);
@@ -80,7 +77,7 @@ public class CommunityController {
   public record Report(@NotBlank @Size(max=500) String reason) {}
   @PostMapping("/manage/comments/{id}/report") public ApiResponse<Void> report(@PathVariable long id,@Valid @RequestBody Report r,@AuthenticationPrincipal User user) {
     if(db.queryForObject("SELECT count(*) FROM blog_comment c JOIN blog_post p ON p.id=c.post_id WHERE c.id=? AND c.status='APPROVED' AND p.status='PUBLISHED' AND p.deleted_at IS NULL",Integer.class,id)==0)throw error(HttpStatus.NOT_FOUND,"评论不存在");
-    db.update("INSERT INTO comment_report(comment_id,reporter_id,reason) VALUES (?,?,?) ON CONFLICT DO NOTHING",id,user.id(),r.reason().strip());return ApiResponse.ok(null);
+    db.update("INSERT INTO comment_report(comment_id,reporter_id,reason) VALUES (?,?,?) ON CONFLICT(comment_id,reporter_id) DO UPDATE SET reason=excluded.reason,resolved=false,created_at=now() WHERE comment_report.resolved",id,user.id(),r.reason().strip());return ApiResponse.ok(null);
   }
   @GetMapping("/admin/comments") public ApiResponse<?> moderation(@RequestParam(defaultValue="1") int page) {
     return ApiResponse.ok(db.queryForList("SELECT c.*,u.nickname,(SELECT count(*) FROM comment_report r WHERE r.comment_id=c.id AND NOT r.resolved) AS reports FROM blog_comment c JOIN sys_user u ON u.id=c.author_id WHERE c.status<>'DELETED' ORDER BY (c.status='PENDING') DESC,c.id DESC LIMIT 50 OFFSET ?",(Math.max(1,Math.min(page,100000))-1)*50));
@@ -88,6 +85,9 @@ public class CommunityController {
   public record Moderate(@NotNull Boolean approved) {}
   @Transactional @PostMapping("/admin/comments/{id}/review") public ApiResponse<Void> moderate(@PathVariable long id,@Valid @RequestBody Moderate r) {
     if(db.update("UPDATE blog_comment SET status=? WHERE id=? AND status<>'DELETED'",r.approved()?"APPROVED":"REJECTED",id)!=1)throw error(HttpStatus.NOT_FOUND,"评论不存在");
+    return ApiResponse.ok(null);
+  }
+  @PostMapping("/admin/comments/{id}/reports/resolve") public ApiResponse<Void> resolveReports(@PathVariable long id) {
     db.update("UPDATE comment_report SET resolved=true WHERE comment_id=?",id);return ApiResponse.ok(null);
   }
   @GetMapping("/admin/comments/{id}/reports") public ApiResponse<?> reports(@PathVariable long id) {return ApiResponse.ok(db.queryForList("SELECT reason,created_at FROM comment_report WHERE comment_id=? AND NOT resolved ORDER BY created_at",id));}

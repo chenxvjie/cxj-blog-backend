@@ -15,7 +15,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class PostController {
   private final PostService posts;
   public PostController(PostService posts) { this.posts = posts; }
-  @GetMapping("/posts") public ApiResponse<Page<BlogPost>> list(@RequestParam(defaultValue = "1") long page, @RequestParam(defaultValue = "10") long size,@RequestParam(required=false) @jakarta.validation.constraints.Size(max=100) String q,@RequestParam(required=false) Long category,@RequestParam(required=false) Long tag,@RequestParam(required=false) Long author,@RequestParam(required=false) String month) { return ApiResponse.ok(posts.search(page,size,q,category,tag,author,month)); }
+  @GetMapping("/posts") public ApiResponse<Page<BlogPost>> list(@RequestParam(defaultValue = "1") long page, @RequestParam(defaultValue = "10") long size,@RequestParam(required=false) @jakarta.validation.constraints.Size(max=100) String q,@RequestParam(required=false) Long category,@RequestParam(required=false) Long tag,@RequestParam(required=false) Long author) { return ApiResponse.ok(posts.search(page,size,q,category,tag,author)); }
   @GetMapping("/posts/{slug}") public ApiResponse<BlogPost> detail(@PathVariable String slug) {
     BlogPost post = posts.bySlug(slug); if (post == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "文章不存在"); return ApiResponse.ok(post);
   }
@@ -28,6 +28,8 @@ public class PostController {
     return ApiResponse.ok(posts.create(new PostRequest(user.id(), request.categoryId(), request.title(), request.slug(), request.summary(), request.contentMd(), request.coverUrl(), request.status(), request.isTop(),request.tagIds()),user));
   }
   public record Review(@jakarta.validation.constraints.NotNull Boolean approved,@jakarta.validation.constraints.Size(max=1000) String reason) {}
+  public record Status(@jakarta.validation.constraints.NotNull @jakarta.validation.constraints.Pattern(regexp="DRAFT|PENDING|PUBLISHED|OFFLINE") String status) {}
+  @PutMapping("/manage/posts/{id}/status") public ApiResponse<BlogPost> status(@PathVariable long id,@Valid @RequestBody Status body,@org.springframework.security.core.annotation.AuthenticationPrincipal com.cxj.blog.auth.AuthService.User user) {return ApiResponse.ok(posts.changeStatus(id,body.status(),user));}
   @PostMapping("/manage/posts/{id}/withdraw") public ApiResponse<BlogPost> withdraw(@PathVariable long id,@org.springframework.security.core.annotation.AuthenticationPrincipal com.cxj.blog.auth.AuthService.User user) {return ApiResponse.ok(posts.withdraw(id,user));}
   @PostMapping("/manage/posts/{id}/review") public ApiResponse<BlogPost> review(@PathVariable long id,@Valid @RequestBody Review body,@org.springframework.security.core.annotation.AuthenticationPrincipal com.cxj.blog.auth.AuthService.User user) {return ApiResponse.ok(posts.review(id,body.approved(),body.reason(),user));}
 }

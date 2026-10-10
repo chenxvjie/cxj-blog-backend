@@ -67,6 +67,6 @@ RETURNING id,email,role;
 
 当前使用Flow JAR制品部署，步骤见deploy/FLOW.md。已有docker-compose.flow.yml时，手动检查必须同时带上两个-f文件，避免误用旧镜像。真实SES发信需在模板审核通过、服务器凭证配置完成后，以本人邮箱验收；测试环境使用模拟客户端，不会发送邮件或产生邮件费用。
 
-已有Nginx /api/v1/admin/ return 403可以继续保留；后端认证与管理员登录验收通过后，移除该location让请求进入受Spring Security保护的/api/代理。无需开放8080或5432公网端口。/actuator继续仅内网健康检查。
+2026-10-10：管理功能已接入后端ADMIN权限校验，原Nginx `/api/v1/admin/ return 403` 临时规则需要移除，让请求进入受Spring Security保护的/api/代理；检查步骤见 [deploy/NGINX_ADMIN_ACCESS.md](deploy/NGINX_ADMIN_ACCESS.md)。无需开放8080或5432公网端口。/actuator继续仅内网健康检查。
 
 已知限制：短信不在此实现；邮件发送与数据库提交不是分布式事务，极少数提交失败可能导致收到但不可用的验证码；重新申请即可。验证码和限流表保留邮箱，应后续加入到期清理及隐私数据删除流程。数据层使用JdbcTemplate参数化SQL处理行锁及PostgreSQL返回值，文章仍用MyBatis-Plus。

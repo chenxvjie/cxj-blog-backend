@@ -125,6 +125,27 @@ public class PostService {
     if(db.update("UPDATE blog_post_submission SET status='DRAFT',review_reason=NULL,updated_at=now() WHERE post_id=? AND status='PENDING'",id)!=1) throw error(HttpStatus.CONFLICT,"当前没有待审核投稿");
     return editable(id,user);
   }
+  @Transactional public BlogPost changeStatus(long id,String status,User user) {
+    lock(id);BlogPost p=owned(id,user);
+    if(!admin(user) && !java.util.List.of("DRAFT","PENDING").contains(status))throw error(HttpStatus.FORBIDDEN,"只能提交或撤回自己的投稿");
+    var rows=db.queryForList("SELECT payload::text AS payload,status FROM blog_post_submission WHERE post_id=?",id);
+    if(!rows.isEmpty() && "PENDING".equals(rows.getFirst().get("status"))) {
+      if("DRAFT".equals(status))return withdraw(id,user);
+      throw error(HttpStatus.CONFLICT,"待审核投稿请使用审核操作");
+    }
+    if(admin(user)) {
+      if(!java.util.List.of("DRAFT","PUBLISHED","OFFLINE").contains(status))throw error(HttpStatus.BAD_REQUEST,"无效的文章状态");
+      if(!rows.isEmpty())throw error(HttpStatus.CONFLICT,"作者仍有修改稿，请等待提交审核");
+      mapper.update(null,new LambdaUpdateWrapper<BlogPost>().eq(BlogPost::getId,id).set(BlogPost::getStatus,status)
+        .set("PUBLISHED".equals(status) && p.getPublishedAt()==null,BlogPost::getPublishedAt,OffsetDateTime.now()));
+      audit(id,user,"POST_STATUS",status);
+    } else {
+      if(rows.isEmpty())throw error(HttpStatus.CONFLICT,"没有可提交的草稿，请先编辑保存");
+      PostRequest r=decode(rows.getFirst().get("payload").toString());
+      submission(p,new PostRequest(user.id(),r.categoryId(),r.title(),r.slug(),r.summary(),r.contentMd(),r.coverUrl(),status,r.isTop(),r.tagIds()),user);
+    }
+    return editable(id,user);
+  }
   @Transactional public BlogPost review(long id,boolean approved,String reason,User user) {
     if(!admin(user)) throw error(HttpStatus.FORBIDDEN,"只有管理员可以审核");
     lock(id);BlogPost p=owned(id,user);
@@ -154,14 +175,10 @@ public class PostService {
     result.getRecords().forEach(this::decorate);return result;
   }
   public Page<BlogPost> search(long page,long size,String q,Long category,Long tag,Long author) {
-    return search(page,size,q,category,tag,author,null);
-  }
-  public Page<BlogPost> search(long page,long size,String q,Long category,Long tag,Long author,String month) {
     var query=new LambdaQueryWrapper<BlogPost>().eq(BlogPost::getStatus,"PUBLISHED").isNull(BlogPost::getDeletedAt)
       .eq(category!=null,BlogPost::getCategoryId,category).eq(author!=null,BlogPost::getAuthorId,author);
     if(q!=null && !q.isBlank())query.and(w->w.like(BlogPost::getTitle,q.strip()).or().like(BlogPost::getSummary,q.strip()).or().like(BlogPost::getContentMd,q.strip()));
     if(tag!=null)query.inSql(BlogPost::getId,"SELECT post_id FROM blog_post_tag WHERE tag_id="+tag);
-    if(month!=null && month.matches("[0-9]{4}-(0[1-9]|1[0-2])"))query.apply("to_char(published_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM')={0}",month);
     var result=mapper.selectPage(Page.of(Math.max(1,page),Math.max(1,Math.min(size,50))),query.orderByDesc(BlogPost::getIsTop,BlogPost::getPublishedAt));
     result.getRecords().forEach(this::decorate);return result;
   }
