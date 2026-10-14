@@ -11,6 +11,7 @@ import static org.mockito.Mockito.*;
 
 class LocalProfileTest {
   ApplicationContextRunner runner=new ApplicationContextRunner()
+      .withPropertyValues("spring.config.import=", "LOCAL_DB_URL=jdbc:postgresql://localhost:5433/cxj_blog")
       .withInitializer(new ConfigDataApplicationContextInitializer())
       .withUserConfiguration(SesConfiguration.class, AuthService.class, GeetestVerifier.class)
       .withBean(JdbcTemplate.class,()->mock(JdbcTemplate.class))

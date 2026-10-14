@@ -21,6 +21,9 @@ bash "$deploy/preflight-release.sh"
 dc=(docker compose --project-directory "$deploy" --env-file "$deploy/.env" -f "$base")
 if test -f "$override"; then dc+=(-f "$override"); fi
 if test -f "$frontend_override"; then dc+=(-f "$frontend_override"); fi
+for extra in docker-compose.postgres.vector.yml docker-compose.ai.flow.yml; do
+  if test -f "$deploy/$extra"; then dc+=(-f "$deploy/$extra"); fi
+done
 "${dc[@]}" config --quiet
 backend_id=$("${dc[@]}" ps -q backend)
 test -n "$backend_id" || { echo 'Existing backend is required for first adoption and rollback.'; exit 1; }
@@ -62,7 +65,7 @@ test -s "$backup"
 "${dc[@]}" exec -T postgres pg_restore --list < "$backup" > /dev/null
 printf 'Database backup: %s\n' "$backup"
 schema_before=$("${dc[@]}" exec -T postgres sh -c 'exec psql -X -w -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1 -c "SELECT max(version::int) FROM flyway_schema_history WHERE success"')
-case "$schema_before" in 2|3|4|5|6) ;; *) echo 'Unexpected schema version; stop for migration review.' >&2; exit 1;; esac
+case "$schema_before" in 2|3|4|5|6|7) ;; *) echo 'Unexpected schema version; stop for migration review.' >&2; exit 1;; esac
 
 write_override() {
   local tmp
@@ -88,6 +91,11 @@ write_override() {
       COS_REGION: ${COS_REGION:-ap-nanjing}
       COS_BUCKET: ${COS_BUCKET:-}
       COS_PUBLIC_BASE_URL: ${COS_PUBLIC_BASE_URL:-}
+      AI_ENABLED: ${AI_ENABLED:-false}
+      AI_BASE_URL: ${AI_BASE_URL:-http://ai:8000}
+      AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:-}
+      AI_QUOTA_SECRET: ${AI_QUOTA_SECRET:-}
+      AI_TRUSTED_PROXIES: ${AI_TRUSTED_PROXIES:-}
 ENVIRONMENT
   mv "$tmp" "$override"
 }
@@ -132,6 +140,9 @@ rollback() {
 }
 trap rollback ERR
 write_override "$new_image"
+for extra in docker-compose.postgres.vector.yml docker-compose.ai.flow.yml; do
+  if test -f "$deploy/$extra"; then dc+=(-f "$deploy/$extra"); fi
+done
 "${dc[@]}" config --quiet
 "${dc[@]}" up -d --no-deps --no-build --pull never backend
 healthy

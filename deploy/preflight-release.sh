@@ -6,7 +6,7 @@ cd "$deploy"
 for tool in docker python3 mktemp; do command -v "$tool" >/dev/null; done
 test -f .env
 dc=(docker compose --project-directory "$deploy" --env-file "$deploy/.env" -f "$deploy/docker-compose.prod.yml")
-for file in docker-compose.flow.yml docker-compose.frontend.flow.yml; do
+for file in docker-compose.flow.yml docker-compose.frontend.flow.yml docker-compose.postgres.vector.yml docker-compose.ai.flow.yml; do
   if test -f "$file"; then dc+=(-f "$deploy/$file"); fi
 done
 tmp=$(mktemp -d)
@@ -34,6 +34,11 @@ services:
       COS_REGION: ${COS_REGION:-ap-nanjing}
       COS_BUCKET: ${COS_BUCKET:-}
       COS_PUBLIC_BASE_URL: ${COS_PUBLIC_BASE_URL:-}
+      AI_ENABLED: ${AI_ENABLED:-false}
+      AI_BASE_URL: ${AI_BASE_URL:-http://ai:8000}
+      AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:-}
+      AI_QUOTA_SECRET: ${AI_QUOTA_SECRET:-}
+      AI_TRUSTED_PROXIES: ${AI_TRUSTED_PROXIES:-}
 YAML
 sql() {
   "${dc[@]}" exec -T postgres sh -c 'exec psql -X -w -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<< "BEGIN READ ONLY; $1; COMMIT;" | sed '/^BEGIN$/d; /^COMMIT$/d'
@@ -41,7 +46,7 @@ sql() {
 echo '=== Database ==='
 sql "SELECT 'postgres=' || current_setting('server_version'); SELECT 'migration=' || version || ',success=' || success FROM flyway_schema_history ORDER BY installed_rank; SELECT 'role=' || role || ',count=' || count(*) FROM sys_user WHERE deleted_at IS NULL GROUP BY role"
 schema=$(sql "SELECT max(version::int) FROM flyway_schema_history WHERE success")
-case "$schema" in 2|3|4|5|6) ;; *) echo 'BLOCKED: unexpected migration version'; exit 1;; esac
+case "$schema" in 2|3|4|5|6|7) ;; *) echo 'BLOCKED: unexpected migration version'; exit 1;; esac
 conflicts=$(sql "SELECT count(*) FROM sys_user WHERE lower(email)='1158189673@qq.com' AND deleted_at IS NULL AND role<>'ADMIN'")
 if test "$conflicts" != 0; then echo 'BLOCKED: administrator email belongs to a non-admin; manual ownership review required'; exit 1; fi
 demotions=$(sql "SELECT count(*) FROM sys_user WHERE role='ADMIN' AND lower(email)<>'1158189673@qq.com'")
@@ -80,6 +85,13 @@ if value('COS_ENABLED').lower() == 'true':
     require('COS_PUBLIC_BASE_URL HTTPS origin', url.scheme == 'https' and bool(url.hostname)
             and not url.username and not url.password and not url.query and not url.fragment and url.path in ('', '/'))
 else: print('INFO: COS image uploads disabled')
+require('AI_ENABLED boolean', value('AI_ENABLED').lower() in ('', 'true', 'false'))
+if value('AI_ENABLED').lower() == 'true':
+    require('AI_INTERNAL_TOKEN configured (32+ characters)', len(value('AI_INTERNAL_TOKEN')) >= 32)
+    require('AI_QUOTA_SECRET configured (32+ characters)', len(value('AI_QUOTA_SECRET')) >= 32)
+    require('AI_BASE_URL internal service', value('AI_BASE_URL').rstrip('/') == 'http://ai:8000')
+    require('AI_TRUSTED_PROXIES configured for ingress', bool(value('AI_TRUSTED_PROXIES').strip()))
+else: print('INFO: AI assistant disabled')
 sys.exit(1 if errors else 0)
 PY
 echo '=== Candidate runtime configuration (values are not printed) ==='

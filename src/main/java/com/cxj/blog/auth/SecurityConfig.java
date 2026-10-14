@@ -28,6 +28,8 @@ public class SecurityConfig {
       .requestCache(c -> c.disable())
       .authorizeHttpRequests(c -> c
         .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ERROR).permitAll()
+        .requestMatchers(HttpMethod.GET,"/api/v1/ai/quota").permitAll()
+        .requestMatchers(HttpMethod.POST,"/api/v1/ai/ask","/api/v1/ai/ask/stream").permitAll()
         .requestMatchers(HttpMethod.POST,"/api/v1/auth/password-login").permitAll()
         .requestMatchers("/api/v1/manage/posts","/api/v1/manage/posts/**").authenticated()
         .requestMatchers("/api/v1/manage/**").hasAnyRole("USER","ADMIN")

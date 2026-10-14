@@ -67,12 +67,23 @@ class PreflightTests(unittest.TestCase):
                    COS_BUCKET='cxj-blog-images-1317285711', COS_PUBLIC_BASE_URL='http://img.example.test')
         self.assertEqual(self.run_check(env).returncode, 1)
 
+    def test_ai_enable_requires_internal_credentials_and_proxy_config(self):
+        env = self.config()
+        env['AI_ENABLED'] = 'true'
+        self.assertEqual(self.run_check(env).returncode, 1)
+        env.update(AI_INTERNAL_TOKEN='private-ai-'*5, AI_QUOTA_SECRET='private-quota-'*4,
+                   AI_BASE_URL='http://ai:8000', AI_TRUSTED_PROXIES='172.18.0.0/16')
+        result = self.run_check(env)
+        self.assertEqual(result.returncode, 0)
+        self.assertNotIn('private-ai-', result.stdout + result.stderr)
+        self.assertNotIn('private-quota-', result.stdout + result.stderr)
+
 class DeploymentSchemaTests(unittest.TestCase):
     def test_both_scripts_accept_deployed_v6_and_reject_unknown_versions(self):
         for name, variable in [('preflight-release.sh', 'schema'), ('deploy-backend.sh', 'schema_before')]:
             source = pathlib.Path(__file__).with_name(name).read_text(encoding='utf-8')
             versions = re.search(r'case "\$' + variable + r'" in ([0-9|]+)\)', source).group(1).split('|')
-            self.assertEqual(set(versions), {'2', '3', '4', '5', '6'})
+            self.assertEqual(set(versions), {'2', '3', '4', '5', '6', '7'})
 
     def test_rollback_blocks_any_changed_or_unknown_schema(self):
         source = pathlib.Path(__file__).with_name('deploy-backend.sh').read_text(encoding='utf-8')

@@ -172,7 +172,7 @@ public class PostService {
   }
   public Page<BlogPost> published(long page,long size) {
     var result=mapper.selectPage(Page.of(Math.max(1,page),Math.max(1,Math.min(size,50))),new LambdaQueryWrapper<BlogPost>()
-      .eq(BlogPost::getStatus,"PUBLISHED").isNull(BlogPost::getDeletedAt).orderByDesc(BlogPost::getIsTop,BlogPost::getPublishedAt));
+      .eq(BlogPost::getStatus,"PUBLISHED").isNull(BlogPost::getDeletedAt).orderByDesc(BlogPost::getIsTop).orderByAsc(BlogPost::getPublishedAt,BlogPost::getId));
     result.getRecords().forEach(this::decorate);return result;
   }
   public Page<BlogPost> search(long page,long size,String q,Long category,Long tag,Long author) {
@@ -180,7 +180,7 @@ public class PostService {
       .eq(category!=null,BlogPost::getCategoryId,category).eq(author!=null,BlogPost::getAuthorId,author);
     if(q!=null && !q.isBlank())query.and(w->w.like(BlogPost::getTitle,q.strip()).or().like(BlogPost::getSummary,q.strip()).or().like(BlogPost::getContentMd,q.strip()));
     if(tag!=null)query.inSql(BlogPost::getId,"SELECT post_id FROM blog_post_tag WHERE tag_id="+tag);
-    var result=mapper.selectPage(Page.of(Math.max(1,page),Math.max(1,Math.min(size,50))),query.orderByDesc(BlogPost::getIsTop,BlogPost::getPublishedAt));
+    var result=mapper.selectPage(Page.of(Math.max(1,page),Math.max(1,Math.min(size,50))),query.orderByDesc(BlogPost::getIsTop).orderByAsc(BlogPost::getPublishedAt,BlogPost::getId));
     result.getRecords().forEach(this::decorate);return result;
   }
   public BlogPost bySlug(String slug) {return decorate(mapper.selectOne(new LambdaQueryWrapper<BlogPost>().eq(BlogPost::getSlug,slug).eq(BlogPost::getStatus,"PUBLISHED").isNull(BlogPost::getDeletedAt)));}
